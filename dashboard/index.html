@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark"><meta name="description" content="Meridian: a transparent, frozen-snapshot token research workspace.">
+  <title>Meridian — Token research, with context</title>
+  <link rel="icon" href="data:,"><link rel="stylesheet" href="app.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+<a class="skip" href="#workspace">Skip to protocol board</a>
+<header class="topbar">
+  <div class="brand"><span class="brand-mark" aria-hidden="true">M</span><span>MERIDIAN<span class="brand-sub">TOKEN RESEARCH / 01</span></span></div>
+  <nav aria-label="Workspace"><button class="nav-active" id="board-nav">Radar</button><button id="method-button">Methodology <span aria-hidden="true">↗</span></button></nav>
+  <div class="freeze"><span class="frozen-icon" aria-hidden="true">◷</span><div>FROZEN SNAPSHOT<strong id="snapshot-date">Loading snapshot</strong></div></div>
+</header>
+<main>
+  <section class="intro">
+    <div><p class="eyebrow">RESEARCH DESK <span>/</span> DEFI PROTOCOLS</p><h1>Find the signal.<br class="mobile-only"> Know the assumptions.</h1><p class="lede">A scenario-based map of token value. Inspect the evidence before allocating time or capital.</p></div>
+    <div class="edition"><span>SEALED DATASET</span><strong>01<span> / 01</span></strong><small>No live prices. No launch predictions.</small></div>
+  </section>
+  <section id="summary" class="metrics" aria-label="Snapshot coverage"></section>
+  <section class="workspace" id="workspace" aria-label="Protocol research workspace">
+    <div class="workspace-head"><div><p class="eyebrow">THE OPPORTUNITY MAP</p><h2>Protocol radar <span id="view-total"></span></h2></div><span class="model-tag">MODEL 1.0 <span>·</span> SCENARIO MARKET CAP</span></div>
+    <div class="view-tabs" role="group" aria-label="Research universe">
+      <button data-view="candidates" aria-pressed="true">Research candidates <span id="count-candidates"></span></button>
+      <button data-view="unrecorded" aria-pressed="false">All no-token records <span id="count-unrecorded"></span></button>
+      <button data-view="recorded" aria-pressed="false">Token benchmarks <span id="count-recorded"></span></button>
+      <button data-view="all" aria-pressed="false">Full universe</button>
+    </div>
+    <div class="view-note" id="view-note"></div>
+    <div class="filters">
+      <label class="search-wrap"><span class="label">SEARCH PROTOCOLS</span><input id="search" type="search" placeholder="Name, slug, symbol…" autocomplete="off"><kbd>/</kbd></label>
+      <label><span class="label">CATEGORY</span><select id="category"><option value="">All categories</option></select></label>
+      <label><span class="label">CHAIN</span><select id="chain"><option value="">All chains</option></select></label>
+      <label><span class="label">COVERAGE</span><select id="coverage"><option value="">All records</option><option value="watchlist">Official watchlist</option><option value="outside">Beyond watchlist</option><option value="structural">Structural caution</option></select></label>
+      <button id="reset" class="quiet">Reset</button>
+    </div>
+    <div class="board-layout">
+      <div class="board-main">
+        <div class="table-meta"><span id="results" role="status" aria-live="polite">Loading real snapshot records…</span><span>Click a protocol to inspect <span aria-hidden="true">↗</span></span></div>
+        <div class="table-scroll" tabindex="0" aria-label="Scrollable protocol table">
+          <table><caption class="sr-only">Protocol scenarios. Global ranks remain unchanged when sorting or filtering.</caption><thead><tr>
+            <th scope="col"><button data-sort="rank">Rank</button></th>
+            <th scope="col"><button data-sort="name">Protocol</button></th>
+            <th scope="col" class="numeric"><button data-sort="tvl_usd">TVL</button></th>
+            <th scope="col" class="numeric"><button data-sort="change_7d">7D Δ</button></th>
+            <th scope="col" class="numeric"><button data-sort="implied_value_usd">Scenario</button></th>
+            <th scope="col" class="confidence-col">Evidence</th>
+          </tr></thead><tbody id="rows"></tbody></table>
+        </div>
+        <div id="empty" hidden><h3>No matching protocols</h3><p>Try another category, chain or search term.</p><button id="empty-reset">Clear filters</button></div>
+        <div class="pagination"><span id="page-label"></span><div><button id="prev" aria-label="Previous page">←</button><button id="next" aria-label="Next page">→</button></div></div>
+      </div>
+      <aside id="inspector" aria-label="Selected protocol preview"></aside>
+    </div>
+    <div class="workspace-foot"><span>TVL ≠ market cap ≠ FDV.</span><span>Values are scenarios, not price targets or expected rewards.</span><button id="method-footer">Read the model →</button></div>
+  </section>
+  <footer class="footer"><span>MERIDIAN <span class="muted">/ Independent research instrument</span></span><span id="source-date"></span></footer>
+</main>
+<dialog id="detail" aria-labelledby="detail-title"><div id="detail-body"></div></dialog>
+<dialog id="method" aria-labelledby="method-title">
+  <div class="dialog-header"><div><p class="eyebrow">TRANSPARENT BY DESIGN</p><h2 id="method-title">What the model knows.</h2></div><button class="close" data-close="method" aria-label="Close methodology">×</button></div>
+  <div class="method-body">
+    <p class="large-copy">A valuation scenario, not a prediction of launch, price or allocation.</p>
+    <div class="formula">TVL <b>×</b> peer multiple <b>×</b> growth <b>×</b> listing maturity <b>×</b> structural factor</div>
+    <div class="method-grid">
+      <section><span class="step-label">01 / ANCHOR</span><h3>Observed market cap / TVL</h3><p>Positive-market-cap token records form the comparison set. Wrappers, bridges, CEXs and versioned products are excluded. Shared CoinGecko IDs (or symbols when absent) count once, selecting the largest-TVL record. The row itself is excluded.</p><p>Use a category median with at least 4 independent peers; otherwise a global median. Ratios are clipped to 0.05–5×. With no peers, use a 0.25× conservative prior. Each detail lists the actual peer slugs and counts.</p></section>
+      <section><span class="step-label">02 / ADJUST</span><h3>Growth and listing history</h3><p>Growth factor = 1 + clamp(7-day growth, −50, 100) / 400. Missing growth is neutral. Maturity = 0.65 + 0.35 × √(min(listing age, 1095) / 1095); a missing date uses 0.70.</p><p>Listing age is days since DefiLlama tracking began, not operating age or time without a token. TVL is capped at $1T for the model. Raw fields remain visible. Structural-product heuristics apply a 0.50× discount.</p></section>
+      <section><span class="step-label">03 / QUALIFY</span><h3>Uncertainty stays visible</h3><p>Moderate evidence requires category peers, at least 8 samples, known growth and listing date, positive TVL and no structural flag. Everything else is Low. No row is labelled high confidence.</p><p>The lower range uses the smaller of peer Q25 / median and 1/2.5 (Low) or 1/1.7 (Moderate); upper uses the larger of Q75 / median and 2.5 or 1.7. These are sensitivity scenarios, not statistical intervals.</p></section>
+      <section><span class="step-label">04 / LIMIT</span><h3>What the snapshot cannot say</h3><p>TVL is deposited capital, not revenue or equity. Market cap reflects circulating token supply; FDV requires total supply, absent here. There is no token price, revenue, unlock schedule, parent mapping, official app URL or campaign proof.</p><p>Market-cap −1 is preserved as an unavailable sentinel and excluded from peers. No token recorded is not proof of no token. Positive market cap is only a frozen observation, not verified liquidity. Ranks cover the full universe; gaps in filtered views are intentional.</p></section>
+    </div>
+    <div class="method-alert">Farm plans are conditional research checklists based on category and chain. Budgets and durations are planning estimates, never eligibility terms. Do not invent activity for an unconfirmed airdrop; skip inaccessible or unexplained products.</div>
+    <p class="muted">Offline implementation: main.ts writes board.json and the byte-identical dashboard/records.dat JSON. The browser fetches that same-origin static file only. No data or executable code is hidden: model.mjs is the exact build model and is included in the source dossier.</p>
+    <p id="full-source" class="source-text"></p>
+  </div>
+</dialog>
+</body>
+</html>
