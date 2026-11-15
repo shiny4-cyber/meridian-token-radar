@@ -1,6 +1,6 @@
 # Meridian — Token Radar
 
-Original offline research workspace for token-radar-01. Build and local verification only; no publication or submission performed.
+An offline token research workspace for the sealed token-radar-01 snapshot. Explore ranked valuation scenarios, inspect the underlying evidence, and review conditional farm plans in an original dark-green financial dashboard.
 
 ## Run
 
@@ -24,6 +24,6 @@ Ranges are sensitivity scenarios, not probability intervals. Market capitalizati
 
 ## Verified locally
 
-Five Node tests pass: malformed input, real coverage/order/plan bounds, missing/zero/outlier values, leave-one-token-out peers, and deterministic ties. Firefox checks pass for search, combined filters, sorting, pagination, two details, exact farm-step agreement, checklist, keyboard focus, methodology, mobile overflow and zero external requests/JS errors. Two independent full builds produced identical file trees. Captures are genuine, unedited browser screenshots.
+Six Node tests pass: malformed input, real coverage/order/plan bounds, missing/zero/outlier values, leave-one-token-out peers, deterministic ties, and normalized output-path rejection. Firefox checks pass for search, combined filters, sorting, pagination, two details, exact farm-step agreement, checklist, keyboard focus, methodology, mobile overflow and zero external requests/JS errors. Two independent full builds produced identical file trees. Captures are genuine, unedited browser screenshots.
 
 Anchor: a8fbc0d9b6a42acbbaede84e8a9db08adb97fc12, drand round 33973827. The official vendor library is unmodified. Preserve the anchor history and bundle every genuine build session unchanged with the official CLI. The supervising session is responsible for publication/submission and final transcript eligibility verification.

@@ -1,0 +1,26 @@
+# Dependencies and local generated outputs
+node_modules/
+/output/
+/out/
+/dist/
+/build/
+/preview/
+/captures/
+*.log
+# Local caches and editor files
+.cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+# Never commit credentials or private signing material
+.env
+.env.*
+!.env.example
+credentials/
+*.pem
+*.key
+*keypair*.json
+wallet.json
+# Local transcript bundles belong outside the repository
+transcripts*.tar.gz

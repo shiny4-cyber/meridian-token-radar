@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { parseSnapshot, buildRadar } from './dashboard/model.mjs';
 import { buildDossier } from './vendor/makefun-board.ts';
 
-const root = fileURLToPath(new URL('.', import.meta.url));
+const root = resolve(fileURLToPath(new URL('.', import.meta.url)));
 function run() {
   const args = process.argv.slice(2);
   let input = '/input/snapshot.json';

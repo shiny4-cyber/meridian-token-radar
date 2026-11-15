@@ -53,6 +53,17 @@ try:
                 r = by_slug[slug]
                 assert r['token_status'] == 'unrecorded' and not r['structural_caution']
             checks.append('default candidate coverage and board agreement')
+            geometry = page.evaluate('''() => {
+                const rows = [...document.querySelectorAll('#rows tr')].map(e => e.getBoundingClientRect());
+                const range = document.querySelector('#inspector .range-numbers').getBoundingClientRect();
+                return { first_row_top: rows[0].top,
+                    fully_visible_rows: rows.filter(r => r.top >= 0 && r.bottom <= innerHeight).length,
+                    inspector_range_bottom: range.bottom, viewport_height: innerHeight };
+            }''')
+            print('Desktop geometry:', json.dumps(geometry), flush=True)
+            assert geometry['fully_visible_rows'] >= 6, 'at least six complete rows must fit at 100% zoom'
+            assert geometry['inspector_range_bottom'] <= 900, 'inspector range must fit'
+            checks.append('1440x900 density: six complete rows and inspector range visible')
             page.screenshot(path=str(captures / '1-board.jpg'), type='jpeg', quality=85)
             first = visible_slugs()[0]
             page.locator('#rows .protocol-button').first.focus()
