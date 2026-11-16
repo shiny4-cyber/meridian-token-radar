@@ -59,15 +59,17 @@ and hash code; `app.js` imports the same functions the Node tests exercise.
 
 ## Verification
 
-- `npm test`: 18 Node tests — malformed input, real coverage and ordering, plan bounds,
+- `npm test`: 23 Node tests — malformed input, real coverage and ordering, plan bounds,
   missing/zero/outlier handling, leave-one-token-out peers, peer-ratio clamping, low-confidence
-  flagging, rank-delta consistency, determinism, output-path rejection, plus filter, comparator,
+  flagging, rank-delta consistency, determinism, output-path rejection, plan uniqueness across chains,
+  fee-range arithmetic, digest tampering and research-only gating, plus filter, comparator,
   pagination, hash and formatting tests over the real snapshot.
 - `tests/browser_test.py` (Playwright + Firefox, ephemeral port, server shut down afterwards):
-  12 check groups — coverage line, 1440×900 density, row-click detail with all five drivers,
+  13 check groups — coverage line, 1440×900 density, row-click detail with all five drivers,
   keyboard focus return, combined filters named in chips and hash, deep-link reload, all 758 rows
   reachable across 95 pages, bidirectional and rank-delta sorting, low-confidence filter,
-  methodology panel, 390px layout, zero JS errors and zero external requests.
+  methodology panel, plan totals and the research-only state, 390px layout, zero JS errors and
+  zero external requests.
 - Two independent builds compared byte for byte (11 files); the dossier equals an exact
   `buildDossier(out, {text_max_bytes: 65536})` rebuild with the unmodified official library.
 
