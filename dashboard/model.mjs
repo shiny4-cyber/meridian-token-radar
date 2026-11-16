@@ -1,5 +1,4 @@
-// Meridian / model v1. Pure functions; no clock, network, randomness or ranked-name overrides.
-// This exact module is run by main.ts and included in the source dossier.
+// Meridian model v1: pure functions, no clock, network, randomness or ranked-name overrides.
 const cmp = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 const money = n => Math.round(clamp(n, 1, 1e14));
@@ -36,7 +35,6 @@ export function parseSnapshot(text) {
 }
 
 export function tokenRecorded(p) {
-  // A zero market cap is not a positive market observation, but its presence still signals metadata.
   return p.gecko_id !== null || p.symbol !== null || p.mcap_usd !== null;
 }
 export function structuralRisk(p) {
@@ -53,8 +51,7 @@ export function quantile(values, q) {
 }
 
 function comparablePool(protocols, p) {
-  // Exclude self and structural products. Deduplicate shared token IDs, preventing pool clones
-  // from counting as independent evidence. Pick largest TVL per token; slug breaks ties.
+  // Deduplicate shared token IDs: a pool clone is not independent evidence.
   const tokenKey = x => x.gecko_id ? `gecko:${x.gecko_id}` : x.symbol ? `symbol:${x.symbol.toUpperCase()}` : `slug:${x.slug}`;
   const ownToken = tokenKey(p);
   const eligible = protocols.filter(x => x.slug !== p.slug && tokenRecorded(x)
@@ -82,14 +79,14 @@ export function scoreProtocol(p, snapshot) {
   const peers = comparablePool(snapshot.protocols, p);
   const age = p.listed_at === null ? null : Math.floor((Date.parse(snapshot.as_of) - Date.parse(p.listed_at)) / 86400000);
   const growth = clamp(p.change_7d ?? 0, -50, 100);
-  const growthFactor = 1 + growth / 400; // only 25% weight on a noisy seven-day observation
+  const growthFactor = 1 + growth / 400; // a 7-day move gets only 25% weight
   const ageFactor = age === null ? 0.70 : 0.65 + 0.35 * Math.sqrt(Math.min(age, 1095) / 1095);
   const structural = structuralRisk(p);
   const structureFactor = structural ? 0.5 : 1;
   const tvl = Math.min(p.tvl_usd, 1e12);
   const implied = money(tvl * peers.multiple * growthFactor * ageFactor * structureFactor);
   const lowConfidence = peers.basis !== 'category' || peers.n < 8 || age === null || p.change_7d === null || structural || tvl === 0;
-  const confidence = lowConfidence ? 'Low' : 'Moderate'; // never a statistical confidence interval
+  const confidence = lowConfidence ? 'Low' : 'Moderate'; // a label, not an interval
   const uncertainty = lowConfidence ? 2.5 : 1.7;
   const lowFactor = Math.min(1 / uncertainty, peers.q25 / peers.multiple);
   const highFactor = Math.max(uncertainty, peers.q75 / peers.multiple);
@@ -103,6 +100,7 @@ export function scoreProtocol(p, snapshot) {
   if (p.tvl_usd > tvl) warnings.push('Model TVL capped at $1 trillion; raw TVL retained.');
   if (tvl === 0) warnings.push('Zero TVL: $1 ranking floor, not a meaningful valuation.');
   if (peers.basis !== 'category') warnings.push('Insufficient independent same-category peers; broad fallback is less comparable.');
+  if (peers.n < 8) warnings.push(`Only ${peers.n} independent peer observation${peers.n === 1 ? '' : 's'}: the peer multiple is a weak anchor, so this row is low confidence.`);
   return { implied_value_usd: implied, age_days: age, confidence,
     band: { low: money(implied * lowFactor), high: money(implied * highFactor), label: 'Scenario range, not a probability interval' },
     drivers: { tvl_used: tvl, peer_multiple: round(peers.multiple), growth_used: growth,
@@ -173,12 +171,29 @@ export function buildRadar(snapshot) {
       farm_steps: plan.steps, planning: plan.planning };
   }).sort((a, b) => b.implied_value_usd - a.implied_value_usd || cmp(a.slug, b.slug))
     .map((row, i) => ({ rank: i + 1, ...row }));
+
+  // rank_delta = TVL rank - model rank, so a positive value means the model lifts the protocol.
+  const tvlOrder = [...rows].sort((a, b) => b.tvl_usd - a.tvl_usd || cmp(a.slug, b.slug));
+  const tvlRank = new Map(tvlOrder.map((row, i) => [row.slug, i + 1]));
+  for (const row of rows) {
+    row.tvl_rank = tvlRank.get(row.slug);
+    row.rank_delta = row.tvl_rank - row.rank;
+  }
+
+  const watchlistTotal = new Set(snapshot.watchlist).size;
+  const watchlistCovered = rows.filter(r => r.watchlist).length;
+  const slugs = new Set(rows.map(r => r.slug));
+  const coverageOk = watchlistCovered === watchlistTotal && snapshot.watchlist.every(slug => slugs.has(slug));
   return { schema: 'meridian-radar/v1', as_of: snapshot.as_of, source: snapshot.source,
     floor_usd: snapshot.floor_usd, model_version: 'Meridian 1.0',
     methodology: 'TVL × median bounded market-cap/TVL peer ratio × bounded growth × listing-age maturity × structural discount. Scenario market capitalization, not FDV, TVL, token price or forecast.',
-    summary: { total: rows.length, watchlist: rows.filter(r => r.watchlist).length,
+    summary: { total: rows.length, watchlist: watchlistCovered, watchlist_total: watchlistTotal,
+      watchlist_covered: watchlistCovered, below_watchlist: rows.filter(r => !r.watchlist).length,
+      coverage_ok: coverageOk,
       no_token_recorded: rows.filter(r => r.token_status === 'unrecorded').length,
       research_candidates: rows.filter(r => r.token_status === 'unrecorded' && !r.structural_caution).length,
       recorded: rows.filter(r => r.token_status === 'recorded').length,
-      structural: rows.filter(r => r.structural_caution).length }, rows };
+      structural: rows.filter(r => r.structural_caution).length,
+      low_confidence: rows.filter(r => r.confidence === 'Low').length,
+      moderate_confidence: rows.filter(r => r.confidence === 'Moderate').length }, rows };
 }

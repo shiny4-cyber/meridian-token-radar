@@ -1,22 +1,18 @@
-// All displayed financial data and farm steps come from records.dat, the exact board.json bytes.
-// records.dat is JSON, not executable code. It avoids repeating a large generated dataset in the source dossier.
+// Every number is read from records.dat (exact board.json bytes from model.mjs) and formatted by view.mjs.
+import { filterRows, sortRows, pageSlice, pageCount, activeFilters, encodeHash, decodeHash,
+  formatUsd, formatExact, formatPct, formatFactor, formatAge, formatDelta, DEFAULT_STATE } from './view.mjs';
+
 const $ = id => document.getElementById(id);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const dollars = value => {
-  if (value === null || value === undefined || value < 0) return 'Unavailable';
-  for (const [n, suffix] of [[1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'K']]) {
-    if (value >= n) return `$${(value / n).toFixed(2)}${suffix}`;
-  }
-  return '$' + value.toLocaleString('en-US', { maximumFractionDigits: 0 });
-};
-const exact = value => value === null || value < 0 ? 'Unavailable' : '$' + value.toLocaleString('en-US', { maximumFractionDigits: 2 });
-const pct = value => value === null ? '—' : `${value > 0 ? '+' : ''}${value.toFixed(2)}%`;
-const factor = value => `${value.toFixed(3)}×`;
-const state = { view: 'candidates', page: 0, size: 8, sort: 'implied_value_usd', direction: -1, selected: null };
+const PAGE_SIZE = 8;
+const state = { ...DEFAULT_STATE };
+const checked = new Map(); // session-only checklist state
 let data, filtered = [], focusReturn = null;
-const checked = new Map(); // Session-only checklist state, no wallet or identity storage.
 
-function badge(r) { return `<span class="badge ${r.confidence.toLowerCase()}">${esc(r.confidence)}</span>`; }
+function badge(r) {
+  const why = r.confidence === 'Low' ? 'Low confidence' : 'Moderate confidence';
+  return `<span class="badge ${r.confidence.toLowerCase()}" title="${why}: ${esc(r.drivers.peer_count)} peer observations, ${esc(r.drivers.peer_basis)}">${esc(r.confidence)}</span>`;
+}
 function statusLabel(r) { return r.token_status === 'recorded' ? 'Token metadata recorded' : 'No token recorded'; }
 function selectOptions(id, values) {
   for (const value of [...new Set(values)].sort()) {
@@ -26,108 +22,137 @@ function selectOptions(id, values) {
 function summary() {
   const s = data.summary;
   $('summary').innerHTML = [
-    ['Watchlist covered', `${s.watchlist}<span class="slash"> / ${s.watchlist}</span>`, 'Every official watchlist protocol included', '<div class="mini-bar" aria-hidden="true">' + '<span></span>'.repeat(20) + '</div>'],
-    ['Research candidates', s.research_candidates, 'No token recorded · structural flags excluded', ''],
-    ['No-token records', s.no_token_recorded, 'Includes wrappers, bridges and exchange records', ''],
-    ['Token benchmarks', s.recorded, `${s.total} total protocols · same sealed snapshot`, '']
-  ].map(([label, value, note, bar]) => `<div class="metric"><div class="metric-label">${label}</div><div class="metric-value">${value}</div><div class="metric-note">${note}</div>${bar}</div>`).join('');
+    ['Watchlist covered', `${s.watchlist_covered}<span class="slash"> / ${s.watchlist_total}</span>`, 'Every watchlist protocol is a board row'],
+    ['Research candidates', s.research_candidates, 'No token recorded · structural flags excluded'],
+    ['Beyond the watchlist', s.below_watchlist, `Ranked below-watchlist protocols · ${s.total} rows in all`],
+    ['Token benchmarks', s.recorded, `Separate view · ${s.low_confidence} rows are low confidence`]
+  ].map(([label, value, note]) => `<div class="metric"><div class="metric-label">${label}</div><div class="metric-value">${value}</div><div class="metric-note">${note}</div></div>`).join('');
   $('snapshot-date').textContent = `${data.as_of} / UTC`;
   $('source-date').textContent = `DefiLlama snapshot · ${data.as_of} · Offline research`;
   $('count-candidates').textContent = s.research_candidates;
   $('count-unrecorded').textContent = s.no_token_recorded;
   $('count-recorded').textContent = s.recorded;
+  $('count-all').textContent = s.total;
   $('full-source').textContent = `Snapshot provenance: ${data.source}`;
+  const pct = s.watchlist_total ? Math.round((s.watchlist_covered / s.watchlist_total) * 1000) / 10 : 0;
+  $('coverage-line').innerHTML = `<b>Coverage: ${s.watchlist_covered} / ${s.watchlist_total} watchlist protocols shown (${pct}%)</b>` +
+    `<span class="coverage-sep">·</span>The watchlist is the floor, not the ceiling: <b>${s.below_watchlist}</b> below-watchlist protocols are ranked too` +
+    `<span class="coverage-sep">·</span>${s.total} snapshot rows · ${s.low_confidence} low-confidence rows flagged`;
+  $('coverage-line').dataset.ok = String(s.coverage_ok);
+}
+function readForm() {
+  state.q = $('search').value;
+  state.category = $('category').value;
+  state.chain = $('chain').value;
+  state.coverage = $('coverage').value;
+}
+function writeHash() {
+  const next = encodeHash(state);
+  const url = location.pathname + location.search + next;
+  if (location.hash !== next) history.replaceState(null, '', url);
+  $('filter-hash').textContent = next ? `URL state ${next}` : 'URL state: default board';
+  $('filter-hash').dataset.changed = String(Boolean(next));
 }
 function render() {
-  const query = $('search').value.trim().toLowerCase(), category = $('category').value, chain = $('chain').value, coverage = $('coverage').value;
-  filtered = data.rows.filter(r => {
-    if (state.view === 'candidates' && (r.token_status !== 'unrecorded' || r.structural_caution)) return false;
-    if (state.view === 'unrecorded' && r.token_status !== 'unrecorded') return false;
-    if (state.view === 'recorded' && r.token_status !== 'recorded') return false;
-    if (category && (r.category || 'Unclassified') !== category) return false;
-    if (chain && !r.chains.includes(chain)) return false;
-    if (coverage === 'watchlist' && !r.watchlist || coverage === 'outside' && r.watchlist || coverage === 'structural' && !r.structural_caution) return false;
-    return !query || `${r.name} ${r.slug} ${r.symbol || ''}`.toLowerCase().includes(query);
-  }).sort((a, b) => {
-    const av = a[state.sort], bv = b[state.sort];
-    if (av === null && bv !== null) return 1;
-    if (bv === null && av !== null) return -1;
-    const delta = typeof av === 'string' ? (av < bv ? -1 : av > bv ? 1 : 0) : (av ?? 0) - (bv ?? 0);
-    return delta * state.direction || a.rank - b.rank;
-  });
-  const pages = Math.max(1, Math.ceil(filtered.length / state.size));
-  state.page = Math.min(state.page, pages - 1);
-  const pageRows = filtered.slice(state.page * state.size, (state.page + 1) * state.size);
-  if (!filtered.some(r => r.slug === state.selected)) state.selected = pageRows[0]?.slug ?? null;
+  readForm();
+  filtered = sortRows(filterRows(data.rows, state), state.sort, state.direction);
+  const page = pageSlice(filtered, state.page, PAGE_SIZE);
+  state.page = page.page;
+  if (!filtered.some(r => r.slug === state.selected)) state.selected = page.rows[0]?.slug ?? null;
   const watchCount = filtered.filter(r => r.watchlist).length;
-  $('results').textContent = `${filtered.length} protocols · ${watchCount} watchlist · global ranks preserved`;
+  $('results').textContent = `${filtered.length} protocols · ${watchCount} on the watchlist · global ranks preserved`;
   $('view-total').textContent = `${filtered.length} records`;
   $('view-note').innerHTML = {
     candidates: '<b>No token recorded</b> · Wrapper, bridge, exchange and versioned-product flags excluded. Missing metadata does not establish a launch.',
     unrecorded: '<b>All no-token records</b> · Includes structural products. No-token-recorded is not proof of no token; inspect each caution flag.',
-    recorded: '<b>Existing-token benchmarks</b> · Token metadata is recorded. Scenario values remain model outputs; observed market cap is shown in details.',
+    recorded: '<b>Existing-token benchmarks</b> · Token metadata recorded. Scenario values remain model outputs; observed market cap is shown in details.',
     all: '<b>Full snapshot</b> · All records, all statuses. Rank is a model scenario; it is not a priority score or expected farm reward.'
   }[state.view];
-  $('rows').innerHTML = pageRows.map(r => `<tr data-slug="${esc(r.slug)}" class="${r.slug === state.selected ? 'selected' : ''}">
-    <td>${String(r.rank).padStart(3, '0')}</td>
+  $('filter-chips').innerHTML = activeFilters(state).map(f =>
+    `<button class="chip" data-clear="${esc(f.key)}" title="Remove this filter">${esc(f.label)}<span aria-hidden="true">×</span><span class="sr-only"> — remove filter</span></button>`).join('');
+  $('reset').disabled = activeFilters(state).length === 1 && state.sort === DEFAULT_STATE.sort && state.page === 0;
+  $('rows').innerHTML = page.rows.map(r => `<tr data-slug="${esc(r.slug)}" data-detail="${esc(r.slug)}" class="${r.slug === state.selected ? 'selected' : ''}">
+    <td class="rank-cell">${String(r.rank).padStart(3, '0')}</td>
     <td><button class="protocol-button" data-detail="${esc(r.slug)}">${esc(r.name)}${r.watchlist ? '<span class="watch-dot" title="Official watchlist"></span>' : ''}<span class="sr-only"> — open protocol detail</span></button><span class="protocol-meta">${esc(r.category || 'Unclassified')} · ${esc(r.chains[0] || 'Chain unknown')}${r.chains.length > 1 ? ` +${r.chains.length - 1}` : ''}${r.structural_caution ? ' · Caution' : ''}</span></td>
-    <td class="numeric" title="${exact(r.tvl_usd)}">${dollars(r.tvl_usd)}</td>
-    <td class="numeric ${r.change_7d >= 0 ? 'up' : 'down'}">${pct(r.change_7d)}</td>
-    <td class="numeric scenario" title="${exact(r.implied_value_usd)}">${dollars(r.implied_value_usd)}<small>${dollars(r.band.low)} – ${dollars(r.band.high)}</small></td>
+    <td class="numeric" title="${formatExact(r.tvl_usd)}">${formatUsd(r.tvl_usd)}</td>
+    <td class="numeric ${r.change_7d >= 0 ? 'up' : 'down'}">${formatPct(r.change_7d)}</td>
+    <td class="numeric scenario" title="${formatExact(r.implied_value_usd)}">${formatUsd(r.implied_value_usd)}<small>${formatUsd(r.band.low)} – ${formatUsd(r.band.high)}</small></td>
+    <td class="numeric delta ${r.rank_delta > 0 ? 'up' : r.rank_delta < 0 ? 'down' : ''}" title="Model rank ${r.rank} vs TVL rank ${r.tvl_rank}">${formatDelta(r.rank_delta)}</td>
+    <td class="numeric age">${formatAge(r.age_days)}</td>
     <td class="confidence-col">${badge(r)}</td></tr>`).join('');
   $('empty').hidden = filtered.length !== 0;
-  $('page-label').textContent = filtered.length ? `${state.page * state.size + 1}–${Math.min((state.page + 1) * state.size, filtered.length)} of ${filtered.length} · Page ${state.page + 1}/${pages}` : '0 records';
-  $('prev').disabled = state.page === 0; $('next').disabled = state.page >= pages - 1;
+  $('page-label').textContent = filtered.length ? `${page.first}–${page.last} of ${filtered.length} · Page ${page.page + 1}/${page.pages}` : '0 records';
+  $('page-input').max = String(page.pages); $('page-input').value = String(page.page + 1);
+  $('prev').disabled = page.page === 0; $('next').disabled = page.page >= page.pages - 1;
+  $('first').disabled = page.page === 0; $('last').disabled = page.page >= page.pages - 1;
   document.querySelectorAll('[data-sort]').forEach(button => {
     button.parentElement.removeAttribute('aria-sort');
     if (button.dataset.sort === state.sort) button.parentElement.setAttribute('aria-sort', state.direction === 1 ? 'ascending' : 'descending');
   });
-  renderPreview();
+  writeHash(); renderPreview();
 }
 function renderPreview() {
-  const r = data.rows.find(r => r.slug === state.selected);
+  const r = data.rows.find(row => row.slug === state.selected);
   if (!r) { $('inspector').innerHTML = '<h3>No selection</h3><p class="muted">Adjust the filters to inspect a protocol.</p>'; return; }
-  $('inspector').innerHTML = `<div class="inspector-kicker"><span>RESEARCH BRIEF</span><span>#${r.rank}</span></div>
+  const d = r.drivers;
+  $('inspector').innerHTML = `<div class="inspector-kicker"><span>RESEARCH BRIEF</span><span>#${r.rank} · TVL #${r.tvl_rank}</span></div>
     <div class="protocol-icon" aria-hidden="true">${esc(r.name.slice(0, 2).toUpperCase())}</div><h3 class="inspect-title">${esc(r.name)}</h3>
-    <p class="inspect-category">${esc(r.category || 'Unclassified')} · ${r.watchlist ? 'Official watchlist' : 'Extended coverage'}</p>
-    <div class="inspect-value-label">Scenario market capitalization</div><div class="inspect-value">${dollars(r.implied_value_usd)}</div>
-    <div class="range-label">ILLUSTRATIVE RANGE · NOT A FORECAST</div><div class="range-track" aria-hidden="true"></div><div class="range-numbers"><span>${dollars(r.band.low)}</span><span>${dollars(r.band.high)}</span></div>
-    <div class="preview-facts"><div><span>Evidence</span>${badge(r)}</div><div><span>Peer basis</span><strong>${esc(r.drivers.peer_basis)}</strong></div><div><span>Peer observations</span><strong>${r.drivers.peer_count}</strong></div><div><span>Age since listing</span><strong>${r.age_days === null ? 'Unknown' : `${r.age_days} days`}</strong></div></div>
+    <p class="inspect-category">${esc(r.category || 'Unclassified')} · ${r.watchlist ? 'Official watchlist' : 'Extended coverage'} · ${esc(formatAge(r.age_days))}</p>
+    <div class="inspect-value-label">Scenario market capitalization</div><div class="inspect-value">${formatUsd(r.implied_value_usd)}</div>
+    <div class="range-label">ILLUSTRATIVE RANGE · NOT A FORECAST</div><div class="range-track" aria-hidden="true"></div><div class="range-numbers"><span>${formatUsd(r.band.low)}</span><span>${formatUsd(r.band.high)}</span></div>
+    <div class="preview-facts"><div><span>Evidence</span>${badge(r)}</div><div><span>Peer multiple</span><strong>${formatFactor(d.peer_multiple)}</strong></div><div><span>Growth factor</span><strong>${formatFactor(d.growth_factor)}</strong></div><div><span>Age factor</span><strong>${formatFactor(d.age_factor)}</strong></div></div>
     <p class="caution">${esc(r.warnings[0])}</p><button class="primary" data-detail="${esc(r.slug)}">Open research & farm plan →</button>`;
 }
 function openDialog(id) { if (id !== 'detail') focusReturn = document.activeElement; $(id).showModal(); }
 function closeDialog(id) { $(id).close(); }
 function showDetail(slug) {
-  const r = data.rows.find(r => r.slug === slug); if (!r) return;
-  focusReturn = document.activeElement;
-  state.selected = slug; render();
-  const d = r.drivers;
-  const completed = checked.get(slug) || new Set();
+  const r = data.rows.find(row => row.slug === slug); if (!r) return;
+  focusReturn = document.activeElement; state.selected = slug;
+  document.querySelectorAll('#rows tr').forEach(tr => tr.classList.toggle('selected', tr.dataset.slug === slug));
+  renderPreview();
+  const d = r.drivers, done = checked.get(slug) || new Set();
+  const kpis = [['Snapshot TVL', formatUsd(r.tvl_usd)], ['Observed market cap', formatUsd(r.mcap_usd)],
+    ['7-day TVL change', formatPct(r.change_7d)], ['Days since listing', r.age_days ?? 'Unknown']];
+  const drivers = [['TVL used by model', formatUsd(d.tvl_used)], ['Peer multiple (mcap / TVL)', formatFactor(d.peer_multiple)],
+    ['Growth used', `${formatPct(d.growth_used)} → ${formatFactor(d.growth_factor)}`],
+    ['Age factor (listing maturity)', formatFactor(d.age_factor)], ['Structure factor', formatFactor(d.structure_factor)],
+    ['Confidence', r.confidence], ['Model rank / TVL rank', `#${r.rank} / #${r.tvl_rank} (${formatDelta(r.rank_delta)})`]];
+  const stages = ['01 / VERIFY ACCESS', '02 / CHECK TOKEN STATUS', '03 / BOUNDED TEST', '04 / MONITOR RISK', '05 / EXIT & RECONCILE'];
   $('detail-body').innerHTML = `<div class="dialog-header"><div><p class="eyebrow">PROTOCOL RESEARCH / GLOBAL RANK ${r.rank}</p><h2 id="detail-title">${esc(r.name)}</h2><span class="muted">${esc(r.category || 'Unclassified')} · ${esc(r.chains.join(', ') || 'Chain unknown')}</span></div><button class="close" data-close="detail" aria-label="Close protocol detail">×</button></div>
     <div class="detail-grid"><section class="detail-evidence"><span class="badge ${r.token_status === 'recorded' ? 'recorded' : ''}">${statusLabel(r)}</span>
-      <p class="inspect-value-label" style="margin-top:17px">Scenario market capitalization</p><div class="inspect-value" title="${exact(r.implied_value_usd)}">${dollars(r.implied_value_usd)}</div>
-      <p class="range-label">${dollars(r.band.low)} – ${dollars(r.band.high)} · ${r.confidence} evidence</p>
-      <dl class="detail-kpis"><div><dt>Snapshot TVL</dt><dd title="${exact(r.tvl_usd)}">${dollars(r.tvl_usd)}</dd></div><div><dt>Observed market cap</dt><dd title="${exact(r.mcap_usd)}">${dollars(r.mcap_usd)}</dd></div><div><dt>7-day TVL change</dt><dd class="${r.change_7d >= 0 ? 'up' : 'down'}">${pct(r.change_7d)}</dd></div><div><dt>Days since listing</dt><dd>${r.age_days ?? 'Unknown'}</dd></div></dl>
-      <h3>Inside the scenario</h3><ul class="factor-list"><li><span>Model TVL</span><b>${dollars(d.tvl_used)}</b></li><li><span>Peer median / TVL</span><b>${factor(d.peer_multiple)}</b></li><li><span>Growth adjustment</span><b>${factor(d.growth_factor)}</b></li><li><span>Listing maturity</span><b>${factor(d.age_factor)}</b></li><li><span>Structural factor</span><b>${factor(d.structure_factor)}</b></li></ul>
-      <p class="muted" style="font-size:10px">${esc(d.peer_basis)} · ${d.peer_count} peers used · ${d.category_peer_count} same-category peers. Multipliers shown rounded; calculation uses full precision.</p>
+      <p class="inspect-value-label top">Scenario market capitalization</p><div class="inspect-value">${formatUsd(r.implied_value_usd)}</div>
+      <p class="range-label">${formatUsd(r.band.low)} – ${formatUsd(r.band.high)} · ${r.confidence} evidence</p>
+      <dl class="detail-kpis">${kpis.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>
+      <h3>Full driver breakdown</h3><ul class="factor-list">${drivers.map(([k, v]) =>
+        `<li><span>${k}</span><b class="${k === 'Confidence' && r.confidence === 'Low' ? 'low-flag' : ''}">${v}</b></li>`).join('')}</ul>
+      <p class="note">${esc(d.peer_basis)} · ${d.peer_count} peers used · ${d.category_peer_count} same-category peers · peer quartiles ${formatFactor(d.peer_q25)} / ${formatFactor(d.peer_q75)}. Multipliers shown rounded; the calculation uses full precision.</p>
       <details><summary>Inspect ${d.peer_count} comparable records</summary><div class="peer-list">${d.peer_slugs.map(esc).join(' · ') || 'No available peers; 0.25× prior used.'}</div></details>
-      <details><summary>Source fields & limitations</summary><p>Slug: ${esc(r.slug)}<br>Listed: ${esc(r.listed_at || 'Unknown')}<br>Symbol: ${esc(r.symbol || 'Not recorded')}<br>CoinGecko ID: ${esc(r.gecko_id || 'Not recorded')}<br>Raw market cap: ${r.mcap_usd === null ? 'null' : esc(r.mcap_usd)}<br>FDV: not supplied<br>Watchlist: ${r.watchlist ? 'Yes' : 'No'}</p><ul class="warning-list">${r.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></details>
+      <details><summary>All ${r.warnings.length} warnings & source fields</summary><p>Slug: ${esc(r.slug)}<br>Listed: ${esc(r.listed_at || 'Unknown')}<br>Symbol: ${esc(r.symbol || 'Not recorded')}<br>CoinGecko ID: ${esc(r.gecko_id || 'Not recorded')}<br>Raw market cap: ${r.mcap_usd === null ? 'null' : esc(r.mcap_usd)}<br>FDV: not supplied<br>Watchlist: ${r.watchlist ? 'Yes' : 'No'}</p><ul class="warning-list">${r.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></details>
       <p class="caution">Listing history is not operating age. Range is a sensitivity scenario, not a probability interval or expected reward.</p>
-    </section><section class="detail-plan"><div class="plan-heading"><h3>Farm research checklist</h3><span id="check-progress">${completed.size}/${r.farm_steps.length} reviewed</span></div><p class="planning-label">${esc(r.planning.label)}</p>
-      <ol class="checklist">${r.farm_steps.map((step, i) => `<li><input type="checkbox" id="step-${i}" data-step="${i}" data-slug="${esc(slug)}" ${completed.has(i) ? 'checked' : ''}><label for="step-${i}"><strong>${['01 / VERIFY ACCESS', '02 / CHECK TOKEN STATUS', '03 / BOUNDED TEST', '04 / MONITOR RISK', '05 / EXIT & RECONCILE'][i]}</strong>${esc(step)}</label></li>`).join('')}</ol>
+    </section><section class="detail-plan"><div class="plan-heading"><h3>Farm research checklist</h3><span id="check-progress">${done.size}/${r.farm_steps.length} reviewed</span></div><p class="planning-label">${esc(r.planning.label)}</p>
+      <ol class="checklist">${r.farm_steps.map((step, i) => `<li><input type="checkbox" id="step-${i}" data-step="${i}" data-slug="${esc(slug)}" ${done.has(i) ? 'checked' : ''}><label for="step-${i}"><strong>${stages[i]}</strong>${esc(step)}</label></li>`).join('')}</ol>
       <div class="detail-status">Checks are local to this page session. No wallet connection. No transactions.</div></section></div>`;
   openDialog('detail');
 }
 function reset() {
+  Object.assign(state, DEFAULT_STATE);
   ['search', 'category', 'chain', 'coverage'].forEach(id => $(id).value = '');
-  state.page = 0; state.sort = 'implied_value_usd'; state.direction = -1; render();
+  render();
+}
+function applyHash() {
+  Object.assign(state, decodeHash(location.hash));
+  $('search').value = state.q; $('category').value = state.category;
+  $('chain').value = state.chain; $('coverage').value = state.coverage;
+  document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === state.view)));
+}
+function setView(view) {
+  state.view = view; state.page = 0;
+  document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === view)));
+  render();
 }
 function bind() {
   ['search', 'category', 'chain', 'coverage'].forEach(id => $(id).addEventListener(id === 'search' ? 'input' : 'change', () => { state.page = 0; render(); }));
-  document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => {
-    state.view = button.dataset.view; state.page = 0;
-    document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', String(b === button))); render();
-  }));
+  document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => setView(button.dataset.view)));
   document.querySelectorAll('[data-sort]').forEach(button => button.addEventListener('click', () => {
     const key = button.dataset.sort; state.direction = key === state.sort ? -state.direction : key === 'name' || key === 'rank' ? 1 : -1;
     state.sort = key; state.page = 0; render();
@@ -135,28 +160,46 @@ function bind() {
   ['reset', 'empty-reset'].forEach(id => $(id).addEventListener('click', reset));
   $('prev').addEventListener('click', () => { state.page--; render(); });
   $('next').addEventListener('click', () => { state.page++; render(); });
+  $('first').addEventListener('click', () => { state.page = 0; render(); });
+  $('last').addEventListener('click', () => { state.page = pageCount(filtered.length, PAGE_SIZE) - 1; render(); });
+  $('page-input').addEventListener('change', event => {
+    const value = Number(event.target.value);
+    if (Number.isFinite(value)) { state.page = Math.max(0, Math.trunc(value) - 1); render(); }
+  });
   $('board-nav').addEventListener('click', () => $('workspace').scrollIntoView());
   ['method-button', 'method-footer'].forEach(id => $(id).addEventListener('click', () => openDialog('method')));
   document.addEventListener('click', event => {
-    const detail = event.target.closest('[data-detail]'), close = event.target.closest('[data-close]');
+    const detail = event.target.closest('[data-detail]'), close = event.target.closest('[data-close]'), clear = event.target.closest('[data-clear]');
     if (detail) showDetail(detail.dataset.detail);
     if (close) closeDialog(close.dataset.close);
+    if (clear) {
+      const key = clear.dataset.clear;
+      if (key === 'view') setView(DEFAULT_STATE.view);
+      else if (key === 'q') { $('search').value = ''; state.page = 0; render(); }
+      else if (key === 'category') { $('category').value = ''; state.page = 0; render(); }
+      else if (key === 'chain') { $('chain').value = ''; state.page = 0; render(); }
+      else if (key === 'coverage') { $('coverage').value = ''; state.page = 0; render(); }
+      else { state.sort = DEFAULT_STATE.sort; state.direction = DEFAULT_STATE.direction; render(); }
+    }
   });
   document.addEventListener('change', event => {
     const input = event.target.closest('[data-step]'); if (!input) return;
     const set = checked.get(input.dataset.slug) || new Set(), n = Number(input.dataset.step);
     if (input.checked) set.add(n); else set.delete(n);
-    checked.set(input.dataset.slug, set); $('check-progress').textContent = `${set.size}/5 reviewed`;
+    checked.set(input.dataset.slug, set);
+    const total = data.rows.find(row => row.slug === input.dataset.slug)?.farm_steps.length || 5;
+    $('check-progress').textContent = `${set.size}/${total} reviewed`;
   });
   document.querySelectorAll('dialog').forEach(dialog => dialog.addEventListener('close', () => {
     if (focusReturn?.isConnected) focusReturn.focus();
-    else document.querySelector(`[data-detail="${CSS.escape(state.selected || '')}"]`)?.focus();
+    else document.querySelector(`button[data-detail="${CSS.escape(state.selected || '')}"]`)?.focus();
   }));
   document.addEventListener('keydown', event => {
     if (event.key === '/' && !document.querySelector('dialog[open]') && !['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
       event.preventDefault(); $('search').focus();
     }
   });
+  addEventListener('hashchange', () => { applyHash(); render(); });
 }
 async function start() {
   try {
@@ -164,8 +207,9 @@ async function start() {
     if (!response.ok) throw new Error(`Static data unavailable (${response.status})`);
     data = await response.json();
     if (data.schema !== 'meridian-radar/v1' || !Array.isArray(data.rows) || !data.rows.length) throw new Error('Invalid board data');
+    if (data.summary.coverage_ok !== true) throw new Error('Board does not cover the watchlist');
     summary(); selectOptions('category', data.rows.map(r => r.category || 'Unclassified'));
-    selectOptions('chain', data.rows.flatMap(r => r.chains)); bind(); render();
+    selectOptions('chain', data.rows.flatMap(r => r.chains)); bind(); applyHash(); render();
     document.documentElement.dataset.ready = 'true';
   } catch (error) {
     $('results').textContent = `Unable to load the board: ${error.message}. Serve the built output through a local static server; file:// fetch is not supported.`;

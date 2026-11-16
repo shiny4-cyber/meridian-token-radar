@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseSnapshot, buildRadar, scoreProtocol, tokenRecorded, structuralRisk } from '../dashboard/model.mjs';
 
+const SNAPSHOT_PATH = process.env.SNAPSHOT_PATH || '/root/work/makefun/token-radar/token-radar-01-kit/input/snapshot.json';
+const snapshotText = () => readFileSync(SNAPSHOT_PATH, 'utf8');
 const fixture = () => ({ as_of: '2026-11-14', source: 'test fixture', floor_usd: 50_000_000,
   protocols: [{ slug: 'sample', name: 'Sample', category: 'Lending', chains: ['Ethereum'], tvl_usd: 10_000_000,
     change_7d: 0, mcap_usd: null, listed_at: null, gecko_id: null, symbol: null }], watchlist: ['sample'] });
@@ -18,8 +20,7 @@ test('rejects malformed financial fields, duplicate slugs and impossible dates',
 });
 
 test('all official rows and watchlist are covered with deterministic ranks and bounded plans', () => {
-  const path = process.env.SNAPSHOT_PATH || '/root/work/makefun/token-radar/token-radar-01-kit/input/snapshot.json';
-  const s = parseSnapshot(readFileSync(path, 'utf8'));
+  const s = parseSnapshot(snapshotText());
   const b = buildRadar(s);
   assert.equal(b.rows.length, s.protocols.length);
   assert.equal(b.rows.length, 758);
@@ -79,4 +80,41 @@ test('fixed inputs give an independently calculated scenario and slug tie-break'
   assert.equal(r.implied_value_usd, 3_125_000);
   s.protocols.push({ ...p, slug: 'aaa' });
   assert.deepEqual(buildRadar(s).rows.map(r => r.slug), ['aaa', 'sample']);
+});
+
+test('peer market-cap/TVL ratios clamp to the documented 0.05–5× bounds', () => {
+  const s = fixture();
+  const subject = { ...s.protocols[0], slug: 'subject', tvl_usd: 10e6 };
+  s.protocols = [subject, ...Array.from({ length: 5 }, (_, i) => ({
+    ...subject, slug: `huge-${i}`, gecko_id: `h${i}`, symbol: `H${i}`, mcap_usd: 10e6 * 100
+  }))];
+  assert.equal(scoreProtocol(subject, s).drivers.peer_multiple, 5);
+  s.protocols = [subject, ...Array.from({ length: 5 }, (_, i) => ({
+    ...subject, slug: `tiny-${i}`, gecko_id: `t${i}`, symbol: `T${i}`, mcap_usd: 1
+  }))];
+  assert.equal(scoreProtocol(subject, s).drivers.peer_multiple, 0.05);
+});
+
+test('low-confidence flagging follows missing data and structural heuristics', () => {
+  const { rows } = buildRadar(parseSnapshot(snapshotText()));
+  for (const row of rows) {
+    assert.ok(['Low', 'Moderate'].includes(row.confidence));
+    const d = row.drivers;
+    const expectedLow = d.peer_basis !== 'category' || d.peer_count < 8 || row.age_days === null
+      || row.change_7d === null || row.structural_caution || d.tvl_used === 0;
+    assert.equal(row.confidence === 'Low', expectedLow, `${row.slug} confidence`);
+    if (row.confidence === 'Low') assert.ok(row.warnings.length >= 2, `${row.slug} must explain its low confidence`);
+  }
+  assert.ok(rows.some(r => r.confidence === 'Moderate'));
+  assert.ok(rows.some(r => r.confidence === 'Low'));
+});
+
+test('TVL rank and rank delta are consistent for every row', () => {
+  const { rows } = buildRadar(parseSnapshot(snapshotText()));
+  const sortedByTvl = [...rows].sort((a, b) => b.tvl_usd - a.tvl_usd || (a.slug < b.slug ? -1 : 1));
+  sortedByTvl.forEach((row, i) => {
+    assert.equal(row.tvl_rank, i + 1);
+    assert.equal(row.rank_delta, row.tvl_rank - row.rank);
+  });
+  assert.equal(new Set(rows.map(r => r.tvl_rank)).size, rows.length);
 });

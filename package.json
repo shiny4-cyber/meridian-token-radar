@@ -1,1 +1,1 @@
-{"name":"meridian-token-radar","version":"1.0.0","private":true,"type":"module","engines":{"node":">=22.18"},"scripts":{"test":"node --test tests/model.test.ts tests/output-path.test.mjs"}}
+{"name":"meridian-token-radar","version":"1.0.0","private":true,"type":"module","engines":{"node":">=22.18"},"scripts":{"test":"node --test tests/model.test.ts tests/view.test.mjs tests/output-path.test.mjs"}}
