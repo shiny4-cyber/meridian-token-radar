@@ -1,6 +1,7 @@
 // Every number is read from records.dat (exact board.json bytes from model.mjs) and formatted by view.mjs.
 import { filterRows, sortRows, pageSlice, pageCount, activeFilters, encodeHash, decodeHash,
-  formatUsd, formatExact, formatPct, formatFactor, formatAge, formatDelta, DEFAULT_STATE } from './view.mjs';
+  formatUsd, formatExact, formatPct, formatFactor, formatAge, formatDelta, stepLabel,
+  assertCoverage, DEFAULT_STATE } from './view.mjs';
 
 const $ = id => document.getElementById(id);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -73,7 +74,7 @@ function render() {
   $('reset').disabled = activeFilters(state).length === 1 && state.sort === DEFAULT_STATE.sort && state.page === 0;
   $('rows').innerHTML = page.rows.map(r => `<tr data-slug="${esc(r.slug)}" data-detail="${esc(r.slug)}" class="${r.slug === state.selected ? 'selected' : ''}">
     <td class="rank-cell">${String(r.rank).padStart(3, '0')}</td>
-    <td><button class="protocol-button" data-detail="${esc(r.slug)}">${esc(r.name)}${r.watchlist ? '<span class="watch-dot" title="Official watchlist"></span>' : ''}<span class="sr-only"> — open protocol detail</span></button><span class="protocol-meta">${esc(r.category || 'Unclassified')} · ${esc(r.chains[0] || 'Chain unknown')}${r.chains.length > 1 ? ` +${r.chains.length - 1}` : ''}${r.structural_caution ? ' · Caution' : ''}</span></td>
+    <td><button class="protocol-button" data-detail="${esc(r.slug)}">${esc(r.name)}${r.watchlist ? '<span class="watch-dot" title="Official watchlist"></span>' : ''}<span class="sr-only"> — open protocol detail</span></button><span class="protocol-meta">${esc(r.category || 'Unclassified')} · ${esc(r.chains[0] || 'Chain unknown')}${r.chains.length > 1 ? ` +${r.chains.length - 1}` : ''}${r.structural_caution ? ' · Caution' : ''}${r.plan.mode === 'research-only' ? ' · Research only' : ''}</span></td>
     <td class="numeric" title="${formatExact(r.tvl_usd)}">${formatUsd(r.tvl_usd)}</td>
     <td class="numeric ${r.change_7d >= 0 ? 'up' : 'down'}">${formatPct(r.change_7d)}</td>
     <td class="numeric scenario" title="${formatExact(r.implied_value_usd)}">${formatUsd(r.implied_value_usd)}<small>${formatUsd(r.band.low)} – ${formatUsd(r.band.high)}</small></td>
@@ -98,6 +99,7 @@ function renderPreview() {
   $('inspector').innerHTML = `<div class="inspector-kicker"><span>RESEARCH BRIEF</span><span>#${r.rank} · TVL #${r.tvl_rank}</span></div>
     <div class="protocol-icon" aria-hidden="true">${esc(r.name.slice(0, 2).toUpperCase())}</div><h3 class="inspect-title">${esc(r.name)}</h3>
     <p class="inspect-category">${esc(r.category || 'Unclassified')} · ${r.watchlist ? 'Official watchlist' : 'Extended coverage'} · ${esc(formatAge(r.age_days))}</p>
+    <p class="plan-tag ${r.plan.mode}">${r.plan.mode === 'research-only' ? 'Research only · no spend plan' : 'Conditional test plan'} · ${r.plan.totals.minutes} min · fees $${r.plan.totals.fee_low}–$${r.plan.totals.fee_high}</p>
     <div class="inspect-value-label">Scenario market capitalization</div><div class="inspect-value">${formatUsd(r.implied_value_usd)}</div>
     <div class="range-label">ILLUSTRATIVE RANGE · NOT A FORECAST</div><div class="range-track" aria-hidden="true"></div><div class="range-numbers"><span>${formatUsd(r.band.low)}</span><span>${formatUsd(r.band.high)}</span></div>
     <div class="preview-facts"><div><span>Evidence</span>${badge(r)}</div><div><span>Peer multiple</span><strong>${formatFactor(d.peer_multiple)}</strong></div><div><span>Growth factor</span><strong>${formatFactor(d.growth_factor)}</strong></div><div><span>Age factor</span><strong>${formatFactor(d.age_factor)}</strong></div></div>
@@ -129,9 +131,12 @@ function showDetail(slug) {
       <details><summary>Inspect ${d.peer_count} comparable records</summary><div class="peer-list">${d.peer_slugs.map(esc).join(' · ') || 'No available peers; 0.25× prior used.'}</div></details>
       <details><summary>All ${r.warnings.length} warnings & source fields</summary><p>Slug: ${esc(r.slug)}<br>Listed: ${esc(r.listed_at || 'Unknown')}<br>Symbol: ${esc(r.symbol || 'Not recorded')}<br>CoinGecko ID: ${esc(r.gecko_id || 'Not recorded')}<br>Raw market cap: ${r.mcap_usd === null ? 'null' : esc(r.mcap_usd)}<br>FDV: not supplied<br>Watchlist: ${r.watchlist ? 'Yes' : 'No'}</p><ul class="warning-list">${r.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></details>
       <p class="caution">Listing history is not operating age. Range is a sensitivity scenario, not a probability interval or expected reward.</p>
-    </section><section class="detail-plan"><div class="plan-heading"><h3>Farm research checklist</h3><span id="check-progress">${done.size}/${r.farm_steps.length} reviewed</span></div><p class="planning-label">${esc(r.planning.label)}</p>
-      <ol class="checklist">${r.farm_steps.map((step, i) => `<li><input type="checkbox" id="step-${i}" data-step="${i}" data-slug="${esc(slug)}" ${done.has(i) ? 'checked' : ''}><label for="step-${i}"><strong>${stages[i]}</strong>${esc(step)}</label></li>`).join('')}</ol>
-      <div class="detail-status">Checks are local to this page session. No wallet connection. No transactions.</div></section></div>`;
+    </section><section class="detail-plan"><div class="plan-heading"><h3>${r.plan.mode === 'research-only' ? 'Research checklist' : 'Farm research checklist'}</h3><span id="check-progress">${done.size}/${r.plan.steps.length} reviewed</span></div>
+      <p class="plan-mode ${r.plan.mode}">${r.plan.mode === 'research-only' ? 'RESEARCH ONLY — no spend plan' : 'CONDITIONAL TEST PLAN'} · ${esc(r.plan.reason)}</p>
+      <p class="planning-label">${esc(r.plan.label)}</p>
+      <ol class="checklist">${r.plan.steps.map((step, i) => `<li><input type="checkbox" id="step-${i}" data-step="${i}" data-slug="${esc(slug)}" ${done.has(i) ? 'checked' : ''}><label for="step-${i}">${esc(stepLabel(step, i, r.plan))}</label></li>`).join('')}</ol>
+      <dl class="plan-totals"><div><dt>Total active time</dt><dd>${r.plan.totals.minutes} min</dd></div><div><dt>Fee budget</dt><dd>$${r.plan.totals.fee_low}–$${r.plan.totals.fee_high}</dd></div><div><dt>Peak principal</dt><dd>${r.plan.totals.peak_principal_usd ? '$' + r.plan.totals.peak_principal_usd : 'No capital'}</dd></div></dl>
+      <div class="detail-status">Plan branch ${esc(r.plan.branch)} · ${r.plan.review_days}-day review. Checks are local to this page session. No wallet connection. No transactions.</div></section></div>`;
   openDialog('detail');
 }
 function reset() {
@@ -207,7 +212,7 @@ async function start() {
     if (!response.ok) throw new Error(`Static data unavailable (${response.status})`);
     data = await response.json();
     if (data.schema !== 'meridian-radar/v1' || !Array.isArray(data.rows) || !data.rows.length) throw new Error('Invalid board data');
-    if (data.summary.coverage_ok !== true) throw new Error('Board does not cover the watchlist');
+    assertCoverage(data.summary, data.rows);
     summary(); selectOptions('category', data.rows.map(r => r.category || 'Unclassified'));
     selectOptions('chain', data.rows.flatMap(r => r.chains)); bind(); applyHash(); render();
     document.documentElement.dataset.ready = 'true';

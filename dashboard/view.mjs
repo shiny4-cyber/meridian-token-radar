@@ -122,3 +122,50 @@ export function formatDelta(delta) {
   if (!Number.isFinite(delta) || delta === 0) return '±0';
   return delta > 0 ? `+${delta}` : `−${Math.abs(delta)}`;
 }
+
+// ---------------------------------------------------------------- plans and coverage proof
+/** The rendered label of one structured plan step; the page never invents parallel prose. */
+export function stepLabel(step, index, plan) {
+  const stage = `${String(index + 1).padStart(2, '0')} / ${step.stage}`;
+  const cost = step.usd_low === 0 && step.usd_high === 0 ? '$0' : `$${step.usd_low}–$${step.usd_high}`;
+  const principal = step.requires_capital && plan.capital_usd ? `, principal up to $${plan.capital_usd} at risk` : '';
+  return `${stage} — ${step.text} Time: ${step.minutes} min. Cost: ${cost}${principal}.`;
+}
+
+/** Footer arithmetic over the steps themselves, so the totals can never drift from them. */
+export function planTotals(steps, capital) {
+  const fees = steps.reduce((n, s) => n + s.usd_low, 0);
+  const feeHigh = steps.reduce((n, s) => n + s.usd_high, 0);
+  return { minutes: steps.reduce((n, s) => n + s.minutes, 0), fee_low: fees, fee_high: feeHigh,
+    peak_principal_usd: steps.some(s => s.requires_capital) ? capital : 0,
+    capital_steps: steps.filter(s => s.requires_capital).length };
+}
+
+const FNV_OFFSET = 0xcbf29ce484222325n, FNV_PRIME = 0x100000001b3n, MASK64 = 0xffffffffffffffffn;
+
+/** FNV-1a over the sorted, de-duplicated slugs: identical in Node and the browser. */
+export function coverageDigest(slugs) {
+  let h = FNV_OFFSET;
+  for (const byte of new TextEncoder().encode([...new Set(slugs)].sort().join('\n'))) {
+    h = ((h ^ BigInt(byte)) * FNV_PRIME) & MASK64;
+  }
+  return h.toString(16).padStart(16, '0');
+}
+
+/** Domain-separated proof: the declared list and the matched rows are hashed as separate sides. */
+export function coverageProof(listed, matched) {
+  return coverageDigest([...listed.map(s => `w:${s}`), ...matched.map(s => `r:${s}`)]);
+}
+
+/** Recompute the coverage proof from the shipped records; a tampered array or flag throws. */
+export function assertCoverage(summary, rows) {
+  const listed = [...new Set(summary.watchlist_slugs || [])];
+  const matched = rows.filter(r => r.watchlist).map(r => r.slug);
+  const digest = coverageProof(listed, matched);
+  if (digest !== summary.coverage_digest) {
+    throw new Error(`Coverage digest mismatch: records give ${digest}, summary states ${summary.coverage_digest}`);
+  }
+  const absent = listed.filter(slug => !matched.includes(slug));
+  if (absent.length) throw new Error(`Coverage digest matches but ${absent.length} watchlist slug(s) have no row`);
+  return { digest, listed: listed.length, matched: matched.length };
+}

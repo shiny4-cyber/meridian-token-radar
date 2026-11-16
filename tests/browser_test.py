@@ -116,6 +116,26 @@ try:
             assert page.evaluate('document.activeElement.classList.contains("protocol-button")')
             checks.append('keyboard open, Escape close and focus return')
 
+            # Plan structure: totals come from the shipped plan, and unsupported rows are research-only.
+            page.locator('#rows .protocol-button').first.click()
+            plan = by_slug[slugs(page)[0]]['plan']
+            panel = page.locator('#detail').inner_text()
+            assert ('CONDITIONAL TEST PLAN' if plan['mode'] == 'conditional' else 'RESEARCH ONLY') in panel
+            totals = page.locator('.plan-totals dd').all_text_contents()
+            assert totals[0] == f"{plan['totals']['minutes']} min", totals
+            assert totals[1] == f"${plan['totals']['fee_low']}–${plan['totals']['fee_high']}", totals
+            assert len(page.locator('.checklist li').all()) == len(plan['steps'])
+            page.keyboard.press('Escape')
+            page.locator('[data-view="all"]').click()
+            page.locator('#coverage').select_option('structural')
+            page.locator('#rows .protocol-button').first.click()
+            research = page.locator('#detail').inner_text()
+            assert 'RESEARCH ONLY' in research and 'No capital' in research
+            assert page.locator('.plan-totals dd').all_text_contents()[2] == 'No capital'
+            page.keyboard.press('Escape')
+            page.locator('#reset').click()
+            checks.append('detail renders shipped plan totals and the research-only state')
+
             # E. filtered state is named, linked in the hash, and restorable from the hash.
             page.locator('#category').select_option('Risk Curators')
             page.locator('#chain').select_option('Ethereum')

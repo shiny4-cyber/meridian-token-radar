@@ -4,7 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark"><meta name="description" content="Meridian: a transparent, frozen-snapshot token research workspace.">
   <title>Meridian — Token research, with context</title>
-  <link rel="icon" href="data:,"><link rel="stylesheet" href="app.css">
+  <link rel="icon" href="data:,"><link rel="stylesheet" href="zz-app.css">
   <script type="module" src="app.js"></script>
 </head>
 <body>
@@ -73,13 +73,13 @@
     <p class="large-copy">A valuation scenario, not a prediction of launch, price or allocation.</p>
     <div class="formula">TVL <b>×</b> peer multiple <b>×</b> growth <b>×</b> listing maturity <b>×</b> structural factor</div>
     <div class="method-grid">
-      <section><span class="step-label">01 / ANCHOR</span><h3>Observed market cap / TVL</h3><p>Positive-market-cap token records form the comparison set; wrappers, bridges, CEXs and versioned products are excluded. Shared CoinGecko IDs (or symbols when absent) count once, keeping the largest-TVL record, and the row itself is excluded.</p><p>A category median needs 4 independent peers, else a global median; ratios clip to 0.05–5×, and no peers means a 0.25× prior. Each detail lists the peer slugs and counts.</p></section>
-      <section><span class="step-label">02 / ADJUST</span><h3>Growth and listing history</h3><p>Growth factor = 1 + clamp(7-day growth, −50, 100) / 400; missing growth is neutral. Maturity = 0.65 + 0.35 × √(min(listing age, 1095) / 1095); a missing date uses 0.70.</p><p>Listing age is days since DefiLlama tracking began, not operating age or time without a token. TVL is capped at $1T for the model and raw fields stay visible. Structural heuristics apply a 0.50× discount.</p></section>
-      <section><span class="step-label">03 / QUALIFY</span><h3>Uncertainty stays visible</h3><p>Moderate evidence requires category peers, 8+ samples, known growth and listing date, positive TVL and no structural flag; everything else is Low, and no row is labelled high confidence.</p><p>Ranges are sensitivity scenarios, not statistical intervals: the lower bound uses the smaller of peer Q25 / median and 1/2.5 (Low) or 1/1.7 (Moderate), the upper the larger of Q75 / median and 2.5 or 1.7.</p></section>
-      <section><span class="step-label">04 / LIMIT</span><h3>What the snapshot cannot say</h3><p>TVL is deposited capital, not revenue or equity. Market cap reflects circulating supply; FDV needs total supply, absent here. There is no token price, revenue, unlock schedule, parent mapping, official app URL or campaign proof.</p><p>Market-cap −1 is an unavailable sentinel excluded from peers. No token recorded is not proof of no token. Ranks cover the whole universe, so gaps in a filtered view are intentional; Δ TVL compares the model rank with a pure TVL rank.</p></section>
+      <section><span class="step-label">01 / ANCHOR</span><h3>Observed market cap / TVL</h3><p>Token-recorded rows with positive market cap and TVL form the comparison set; wrappers, bridges, CEXs and versioned products are excluded and shared token IDs count once. A category median needs 4 independent peers, else a global median, else a 0.25× prior. Ratios clip to 0.05–5×; each detail lists the peer slugs and counts.</p></section>
+      <section><span class="step-label">02 / ADJUST</span><h3>Growth and listing history</h3><p>Growth factor = 1 + clamp(7-day growth, −50, 100) / 400, missing growth neutral. Maturity = 0.65 + 0.35 × √(min(listing age, 1095) / 1095), 0.70 when the date is missing. Listing age is not operating age; TVL caps at $1T and structural heuristics take 0.50×.</p></section>
+      <section><span class="step-label">03 / QUALIFY</span><h3>Uncertainty stays visible</h3><p>Moderate needs category peers, 8+ samples, known growth and date, positive TVL and no structural flag; everything else is Low and nothing is labelled high. Ranges are sensitivity scenarios from peer quartiles, not statistical intervals.</p></section>
+      <section><span class="step-label">04 / LIMIT</span><h3>What the snapshot cannot say</h3><p>TVL is not revenue or equity; market cap is not FDV, which needs absent supply data. There is no price, unlock schedule, parent mapping, trusted app URL or campaign proof, and market-cap −1 is an unavailable sentinel. Δ TVL compares model rank with pure TVL rank.</p></section>
     </div>
-    <div class="method-alert">Farm plans are conditional research checklists built from category and chain. Budgets and durations are planning estimates, never eligibility terms. Do not invent activity for an unconfirmed airdrop; skip inaccessible or unexplained products.</div>
-    <p class="note">Offline: main.ts writes board.json and the byte-identical dashboard/records.dat. The browser fetches only that same-origin static file. model.mjs is the exact build model and view.mjs the exact filter, sort and format code, both included in this source dossier.</p>
+    <div class="method-alert">Farm plans are conditional research checklists, and rows without evidence are marked research-only with zero spend. Budgets and durations are planning estimates, never eligibility terms. Do not invent activity for an unconfirmed airdrop.</div>
+    <p class="note">main.ts writes board.json and the byte-identical dashboard/records.dat; the browser fetches only that same-origin file. model.mjs is the build model and view.mjs the filter, comparator and coverage-proof code, both shown in this dossier.</p>
     <p id="full-source" class="source-text"></p>
   </div>
 </dialog>
