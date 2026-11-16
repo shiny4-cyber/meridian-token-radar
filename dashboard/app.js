@@ -99,7 +99,8 @@ function renderPreview() {
   $('inspector').innerHTML = `<div class="inspector-kicker"><span>RESEARCH BRIEF</span><span>#${r.rank} · TVL #${r.tvl_rank}</span></div>
     <div class="protocol-icon" aria-hidden="true">${esc(r.name.slice(0, 2).toUpperCase())}</div><h3 class="inspect-title">${esc(r.name)}</h3>
     <p class="inspect-category">${esc(r.category || 'Unclassified')} · ${r.watchlist ? 'Official watchlist' : 'Extended coverage'} · ${esc(formatAge(r.age_days))}</p>
-    <p class="plan-tag ${r.plan.mode}">${r.plan.mode === 'research-only' ? 'Research only · no spend plan' : 'Conditional test plan'} · ${r.plan.totals.minutes} min · fees $${r.plan.totals.fee_low}–$${r.plan.totals.fee_high}</p>
+    <p class="plan-tag ${r.plan.mode}">${r.plan.mode === 'research-only' ? 'Research only · no spend plan' : 'Conditional test plan'} · ${r.plan.totals.minutes} min · fees $${r.plan.totals.fee_low}–$${r.plan.totals.fee_high} · review ${r.plan.review_date}</p>
+    <p class="sens">Age check: ${formatUsd(r.implied_value_usd)} at listing maturity vs ${formatUsd(r.sensitivity.implied_neutral_age)} at neutral ${r.sensitivity.neutral_age_days}d (${formatPct(r.sensitivity.delta_pct)})</p>
     <div class="inspect-value-label">Scenario market capitalization</div><div class="inspect-value">${formatUsd(r.implied_value_usd)}</div>
     <div class="range-label">ILLUSTRATIVE RANGE · NOT A FORECAST</div><div class="range-track" aria-hidden="true"></div><div class="range-numbers"><span>${formatUsd(r.band.low)}</span><span>${formatUsd(r.band.high)}</span></div>
     <div class="preview-facts"><div><span>Evidence</span>${badge(r)}</div><div><span>Peer multiple</span><strong>${formatFactor(d.peer_multiple)}</strong></div><div><span>Growth factor</span><strong>${formatFactor(d.growth_factor)}</strong></div><div><span>Age factor</span><strong>${formatFactor(d.age_factor)}</strong></div></div>
@@ -135,6 +136,8 @@ function showDetail(slug) {
       <p class="plan-mode ${r.plan.mode}">${r.plan.mode === 'research-only' ? 'RESEARCH ONLY — no spend plan' : 'CONDITIONAL TEST PLAN'} · ${esc(r.plan.reason)}</p>
       <p class="planning-label">${esc(r.plan.label)}</p>
       <ol class="checklist">${r.plan.steps.map((step, i) => `<li><input type="checkbox" id="step-${i}" data-step="${i}" data-slug="${esc(slug)}" ${done.has(i) ? 'checked' : ''}><label for="step-${i}">${esc(stepLabel(step, i, r.plan))}</label></li>`).join('')}</ol>
+      <p class="note sens-block">Age sensitivity: implied value ${formatUsd(r.implied_value_usd)} if listing maturity holds, ${formatUsd(r.sensitivity.implied_neutral_age)} under a neutral ${r.sensitivity.neutral_age_days}-day age (${formatPct(r.sensitivity.delta_pct)}). Listing age is not operating age or time without a token.</p>
+      <p class="note">${esc(r.plan.fee_note)} Review date ${r.plan.review_date}, computed from the snapshot's ${data.as_of} plus ${r.plan.review_days} days.</p>
       <dl class="plan-totals"><div><dt>Total active time</dt><dd>${r.plan.totals.minutes} min</dd></div><div><dt>Fee budget</dt><dd>$${r.plan.totals.fee_low}–$${r.plan.totals.fee_high}</dd></div><div><dt>Peak principal</dt><dd>${r.plan.totals.peak_principal_usd ? '$' + r.plan.totals.peak_principal_usd : 'No capital'}</dd></div></dl>
       <div class="detail-status">Plan branch ${esc(r.plan.branch)} · ${r.plan.review_days}-day review. Checks are local to this page session. No wallet connection. No transactions.</div></section></div>`;
   openDialog('detail');

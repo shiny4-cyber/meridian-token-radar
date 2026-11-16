@@ -76,16 +76,37 @@ function comparablePool(protocols, p) {
     slugs: pool.map(x => x.slug).sort(cmp) };
 }
 
+export const NEUTRAL_AGE_DAYS = 365;
+
+/** Mid-rank percentile of one 7-day move among the rows that report one; null when it reports none. */
+export function growthPercentile(protocols, value) {
+  if (value === null || value === undefined) return null;
+  let below = 0, equal = 0, total = 0;
+  for (const x of protocols) {
+    if (x.change_7d === null || x.change_7d === undefined) continue;
+    total++;
+    if (x.change_7d < value) below++; else if (x.change_7d === value) equal++;
+  }
+  return total ? (below + equal / 2) / total : null;
+}
+
 export function scoreProtocol(p, snapshot) {
   const peers = comparablePool(snapshot.protocols, p);
   const age = p.listed_at === null ? null : Math.floor((Date.parse(snapshot.as_of) - Date.parse(p.listed_at)) / 86400000);
   const growth = clamp(p.change_7d ?? 0, -50, 100);
-  const growthFactor = 1 + growth / 400; // a 7-day move gets only 25% weight
+  // Documented mapping: +100% growth lifts value 1.5x, -50% cuts it to 0.75x.
+  const growthFactor = 1 + growth / 200;
+  // Cross-sectional term: mid-rank percentile of this move among reported rows, 0.90x..1.10x.
+  const pct = growthPercentile(snapshot.protocols, p.change_7d);
+  const percentileFactor = pct === null ? 1 : 0.9 + 0.2 * pct;
+  const growthCombined = growthFactor * percentileFactor;
   const ageFactor = age === null ? 0.70 : 0.65 + 0.35 * Math.sqrt(Math.min(age, 1095) / 1095);
+  const neutralAgeFactor = 0.65 + 0.35 * Math.sqrt(Math.min(NEUTRAL_AGE_DAYS, 1095) / 1095);
   const structural = structuralRisk(p);
   const structureFactor = structural ? 0.5 : 1;
   const tvl = Math.min(p.tvl_usd, 1e12);
-  const implied = money(tvl * peers.multiple * growthFactor * ageFactor * structureFactor);
+  const implied = money(tvl * peers.multiple * growthCombined * ageFactor * structureFactor);
+  const impliedNeutral = money(tvl * peers.multiple * growthCombined * neutralAgeFactor * structureFactor);
   const lowConfidence = peers.basis !== 'category' || peers.n < 8 || age === null || p.change_7d === null || structural || tvl === 0;
   const confidence = lowConfidence ? 'Low' : 'Moderate'; // a label, not an interval
   const uncertainty = lowConfidence ? 2.5 : 1.7;
@@ -103,9 +124,14 @@ export function scoreProtocol(p, snapshot) {
   if (peers.basis !== 'category') warnings.push('Insufficient independent same-category peers; broad fallback is less comparable.');
   if (peers.n < 8) warnings.push(`Only ${peers.n} independent peer observation${peers.n === 1 ? '' : 's'}: the peer multiple is a weak anchor, so this row is low confidence.`);
   return { implied_value_usd: implied, age_days: age, confidence,
+    sensitivity: { neutral_age_days: NEUTRAL_AGE_DAYS, neutral_age_factor: round(neutralAgeFactor),
+      implied_neutral_age: impliedNeutral,
+      delta_pct: round(((implied - impliedNeutral) / impliedNeutral) * 100) },
     band: { low: money(implied * lowFactor), high: money(implied * highFactor), label: 'Scenario range, not a probability interval' },
     drivers: { tvl_used: tvl, peer_multiple: round(peers.multiple), growth_used: growth,
-      growth_factor: round(growthFactor), age_factor: round(ageFactor), structure_factor: structureFactor,
+      growth_factor: round(growthFactor), growth_percentile: pct === null ? null : round(pct),
+      percentile_factor: round(percentileFactor), growth_combined: round(growthCombined),
+      age_factor: round(ageFactor), structure_factor: structureFactor,
       peer_basis: peers.basis, peer_count: peers.n, category_peer_count: peers.category_n,
       peer_q25: round(peers.q25), peer_q75: round(peers.q75), peer_slugs: peers.slugs }, warnings };
 }
@@ -113,9 +139,15 @@ export function scoreProtocol(p, snapshot) {
 // ---------------------------------------------------------------- farm plans
 const USD = n => n >= 1e9 ? `$${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `$${(n / 1e6).toFixed(2)}M`
   : n >= 1e3 ? `$${(n / 1e3).toFixed(1)}K` : `$${Math.round(n)}`;
-const FEE = chain => chain === 'Ethereum' ? { low: 5, high: 30 } : { low: 1, high: 10 };
+// Documented per-chain fee assumption in USD, not an observation: one entry transaction per chain.
+export const CHAIN_FEES = { Ethereum: [3.5, 22], Arbitrum: [0.15, 1.2], Optimism: [0.15, 1.2],
+  Base: [0.05, 0.6], Polygon: [0.02, 0.3], Binance: [0.1, 0.8], Solana: [0.01, 0.15],
+  Tron: [0.4, 2.5], Avalanche: [0.1, 1], Bitcoin: [2, 12], default: [0.2, 1.5] };
 const REVIEW_DAYS = 14;
-const EMPTY = { low: 0, high: 0 };
+const MAX_PLAN_CHAINS = 3;
+const r2 = n => Math.round(n * 100) / 100;
+const feeOf = chain => CHAIN_FEES[chain] || CHAIN_FEES.default;
+const money2 = n => '$' + (n < 10 ? n.toFixed(2).replace(/0$/, '') : Math.round(n).toLocaleString('en-US'));
 
 function capitalFor(p) {
   if (p.tvl_usd >= 5e9) return 250;
@@ -136,34 +168,26 @@ function familyOf(category) {
   return 'generic';
 }
 
-const ACTIONS = {
-  lending: ['test a small supply position in an accepted collateral asset, without borrowing',
-    'bad debt, oracle failure and withdrawal liquidity',
-    'redeem a small amount first, then withdraw the remainder and confirm the receipt balance'],
-  dex: ['make one small swap with a 0.5% slippage ceiling and no volume padding',
-    'slippage, MEV, token approvals and impermanent loss',
-    'reverse the test swap if needed, remove any LP position and revoke residual approvals'],
-  bridge: ['bridge one small amount to the documented destination only after confirming the return route',
-    'bridge custody, validator compromise, depegging and one-way liquidity',
-    'test the documented return route before adding funds and reconcile the original-chain balance'],
-  staking: ['stake a small amount of the documented asset after checking minimums and the withdrawal queue',
-    'slashing, receipt-token depeg and delayed withdrawals',
-    'submit the unstake request, track the queue and compare the secondary-market discount'],
-  derivative: ['review the market read-only and open no leverage or outcome bet without a documented sandbox',
-    'liquidation, funding costs and total loss of margin',
-    'close any exposure, cancel resting orders and withdraw free collateral'],
-  custody: ['check jurisdiction, custody and KYC access without depositing anything',
-    'custody, legal restrictions, issuer default and redemption gates',
-    "use the issuer's documented redemption route only if already invested"],
-  vault: ['test a small deposit after reviewing the strategy, manager permissions and withdrawal terms',
-    'manager discretion, strategy leverage, contract loss and redemption delays',
-    'redeem a small share amount first, then exit the remainder net of fees'],
-  generic: ['map the documented product and supported assets before any capital moves',
-    'unknown mechanics, contract failure and unverified access',
-    'use the documented reversal flow; if no exit can be explained, stay research-only'],
+const MECH = {
+  lending: 'a supply-only position in one accepted collateral market, borrowing disabled',
+  dex: 'one spot swap at a 0.5% slippage ceiling with no volume padding',
+  bridge: 'one bridge transfer with the return route timed first',
+  staking: 'one staking position after checking the unstake queue',
+  derivative: 'a read-only market review with no leverage and no outcome bet',
+  custody: 'an access and jurisdiction check with no deposit',
+  vault: 'one disclosed vault share after reading the strategy and exit terms',
+  generic: 'a documented-access review before any capital moves',
 };
+const RISK = { lending: 'bad debt, oracle failure and withdrawal liquidity', dex: 'slippage, MEV, approvals and impermanent loss',
+  bridge: 'custody, validator compromise, depegging and one-way liquidity', staking: 'slashing, receipt depeg and withdrawal queues',
+  derivative: 'liquidation, funding costs and total loss of margin', custody: 'custody, legal restrictions and redemption gates',
+  vault: 'manager discretion, leverage, contract loss and redemption delays', generic: 'unknown mechanics, contract failure and unverified access' };
+const EXIT = { lending: 'Redeem a small amount first, then withdraw the remainder', dex: 'Reverse the swap if needed and revoke residual approvals',
+  bridge: 'Test the return route before adding funds and reconcile both balances', staking: 'Submit the unstake request and track the queue',
+  derivative: 'Close exposure, cancel orders and withdraw free collateral', custody: "Use the issuer's redemption route only if already invested",
+  vault: 'Redeem a small share first, then exit the remainder net of fees', generic: 'Follow the documented reversal flow' };
+const MISSING = { structural: 'a structural flag that a parent asset explains', category: 'a recorded category', prior: 'at least one independent token peer' };
 
-/** A spend plan needs evidence; without it the row gets an explicit research-only state. */
 export function planState(p, structural, score) {
   const d = score.drivers;
   if (structural) return { mode: 'research-only', reason: 'a wrapper, bridge, exchange or versioned product whose value may belong to a parent asset' };
@@ -177,47 +201,61 @@ export function planBranch(p, structural) {
   return `${familyOf(p.category)}:${[...p.chains].sort(cmp)[0] || 'chain-unknown'}:${structural ? 'structural' : 'direct'}:${p.chains.length > 1 ? 'multi' : 'single'}`;
 }
 
-export function farmPlan(p, structural, score) {
+export function farmPlan(p, structural, score, snapshot) {
   const state = planState(p, structural, score);
-  const chain = [...p.chains].sort(cmp)[0] || 'an unverified chain';
-  const extra = p.chains.length > 1 ? ` (${p.chains.length} chains listed)` : '';
+  const chains = [...p.chains].sort(cmp).slice(0, MAX_PLAN_CHAINS);
+  const n = chains.length || 1;
+  const chainList = chains.length ? chains.join(' + ') : 'an unverified chain';
   const recorded = tokenRecorded(p);
-  const capital = state.mode === 'conditional' ? capitalFor(p) : 0;
-  const fee = state.mode === 'conditional' ? FEE(chain) : EMPTY;
-  const [action, risk, exit] = ACTIONS[familyOf(p.category)];
-  const d = score.drivers, band = score.band;
-  const steps = state.mode === 'research-only' ? [
-    { stage: 'VERIFY ACCESS', minutes: 20, usd_low: 0, usd_high: 0, requires_capital: false,
-      text: `Read ${p.name}'s own documentation, contracts and audits for ${chain}${extra}; it is ${state.reason}, so this row carries no spend plan.` },
-    { stage: 'CHECK TOKEN STATUS', minutes: 10, usd_low: 0, usd_high: 0, requires_capital: false,
-      text: `Confirm whether ${p.name} records a token or a published incentive program; the snapshot ${recorded ? 'records token metadata' : 'records none'}, which proves neither a launch nor its absence.` },
-    { stage: 'RESEARCH LOG', minutes: 15, usd_low: 0, usd_high: 0, requires_capital: false,
-      text: `Write down what must become true first for ${p.name} — audited contracts, a documented exit and a published program — and set a review date before any capital is considered.` },
-  ] : [
-    { stage: 'VERIFY ACCESS', minutes: 25, usd_low: 0, usd_high: 0, requires_capital: false,
-      text: `Verify ${p.name}'s official app, contracts and audit reports for ${chain}${extra}; the snapshot carries no trusted URL, so confirm the ${p.category} mechanics yourself.` },
-    { stage: 'CHECK TOKEN STATUS', minutes: 10, usd_low: 0, usd_high: 0, requires_capital: false,
+  const family = familyOf(p.category);
+  const conditional = state.mode === 'conditional';
+  const capital = conditional ? capitalFor(p) : 0;
+  const fees = chains.map(feeOf);
+  const entry = { low: r2(fees.reduce((a, f) => a + f[0], 0)) || 0.2, high: r2(fees.reduce((a, f) => a + f[1], 0)) || 1.5 };
+  const weeks = REVIEW_DAYS / 7;
+  const band = score.band, d = score.drivers;
+  const reviewDate = new Date(Date.parse(`${snapshot.as_of}T00:00:00Z`) + REVIEW_DAYS * 86400000).toISOString().slice(0, 10);
+  const feeNote = `Per-chain fee assumption (not an observation): ${chains.map((c, i) => `${c} ${money2(fees[i][0])}–${money2(fees[i][1])}`).join(', ') || 'unknown chain 0.2–1.5'}; one entry transaction per chain, capped at ${MAX_PLAN_CHAINS} chains.`;
+  if (!conditional) {
+    const key = structural ? 'structural' : p.category === null ? 'category' : 'prior';
+    const steps = [
+      { stage: 'VERIFY ACCESS', minutes: 10 + 6 * n, usd_low: 0, usd_high: 0, requires_capital: false,
+        text: `Read ${p.name}'s contracts and audits on ${chainList}; it is ${state.reason}, so verify whether a documented app and exit exist at all.` },
+      { stage: 'CHECK TOKEN STATUS', minutes: recorded ? 8 : 12, usd_low: 0, usd_high: 0, requires_capital: false,
+        text: `Confirm whether ${p.name} records a token or a published program; the snapshot ${recorded ? 'records token metadata' : 'records none'}, which proves neither a launch nor its absence.` },
+      { stage: 'NEXT ACTION', minutes: 5 + 2 * n, usd_low: 0, usd_high: 0, requires_capital: false,
+        text: `Next action on ${reviewDate}: re-check ${p.name} for ${MISSING[key]}; if that changes, rebuild the plan, and until then keep exposure at zero across ${chainList}.` },
+    ];
+    return { mode: 'research-only', reason: state.reason, branch: planBranch(p, structural), chain: chains[0] || null,
+      chains, capital_usd: 0, review_days: REVIEW_DAYS, review_date: reviewDate, fee_note: feeNote,
+      steps, totals: planTotals(steps, 0),
+      label: 'Research-only: this record does not justify any spend. Costs stay at zero and the next action is dated.' };
+  }
+  const action = `On ${chainList} (${n} chain${n === 1 ? '' : 's'}): ${MECH[family]}, sized at ${USD(capital)} of principal against a ${USD(band.low)}–${USD(band.high)} model band at ${d.peer_multiple}× the peer median, with ${money2(entry.low)}–${money2(entry.high)} of entry fees and ${recorded ? 'token metadata already recorded' : 'no token recorded'}.`;
+  const steps = [
+    { stage: 'VERIFY ACCESS', minutes: 10 + 8 * n + (recorded ? 0 : 4), usd_low: 0, usd_high: 0, requires_capital: false,
+      text: `Verify ${p.name}'s official app, contracts and audits on ${chainList}; the snapshot carries no trusted URL, so confirm the ${p.category} mechanics yourself.` },
+    { stage: 'CHECK TOKEN STATUS', minutes: recorded ? 8 : 15, usd_low: 0, usd_high: 0, requires_capital: false,
       text: recorded ? `${p.name} already records token metadata (${p.symbol || p.gecko_id}); inspect only published incentive programs, never a hypothetical launch.`
         : `${p.name} records no token; confirm whether a program now exists, because absent metadata is not proof of a future launch.` },
-    { stage: 'BOUNDED TEST', minutes: 30, usd_low: fee.low, usd_high: fee.high, requires_capital: true,
-      text: `On ${chain}${extra}, ${action}, with at most ${USD(capital)} of principal; ${USD(band.low)}–${USD(band.high)} is the model range, not a target.` },
-    { stage: 'MONITOR RISK', minutes: 30, usd_low: 0, usd_high: 0, requires_capital: false,
-      text: `Re-check weekly for ${REVIEW_DAYS} days at a ${d.peer_multiple}× peer multiple over ${d.peer_count} peers: watch ${risk}, and log receipts, fees and balances.` },
-    { stage: 'EXIT & RECONCILE', minutes: 20, usd_low: fee.low, usd_high: fee.high, requires_capital: false,
-      text: `For ${p.name}, ${exit}; keep $${fee.low}–$${fee.high} for exit fees and stop on any unexpected approval or withdrawal failure.` },
+    { stage: 'BOUNDED TEST', minutes: 15 + 12 * n + Math.round(capital / 50), usd_low: entry.low, usd_high: entry.high, requires_capital: true,
+      text: action },
+    { stage: 'MONITOR RISK', minutes: Math.round(weeks * (6 + 3 * n)), usd_low: 0, usd_high: 0, requires_capital: false,
+      text: `Re-check weekly to ${reviewDate} at ${d.peer_multiple}× over ${d.peer_count} peers: watch ${RISK[family]} on ${chainList}, and log receipts, fees and balances.` },
+    { stage: 'EXIT & RECONCILE', minutes: 10 + 6 * n, usd_low: entry.low, usd_high: entry.high, requires_capital: false,
+      text: `${EXIT[family]} on ${chainList} by ${reviewDate}; keep ${money2(entry.low)}–${money2(entry.high)} for exit fees and stop on any unexpected approval or withdrawal failure.` },
   ];
-  const totals = planTotals(steps, capital);
-  return { mode: state.mode, reason: state.reason, branch: planBranch(p, structural), chain,
-    capital_usd: capital, review_days: REVIEW_DAYS, steps, totals,
-    label: state.mode === 'research-only' ? 'Research-only: this snapshot record does not justify any spend. Costs stay at zero.'
-      : 'Illustrative planning estimates only; not campaign terms. Principal can be lost and rewards may be zero.' };
+  return { mode: 'conditional', reason: state.reason, branch: planBranch(p, structural), chain: chains[0] || null,
+    chains, capital_usd: capital, review_days: REVIEW_DAYS, review_date: reviewDate, fee_note: feeNote, action,
+    steps, totals: planTotals(steps, capital),
+    label: 'Illustrative planning estimates only; not campaign terms. Principal can be lost and rewards may be zero.' };
 }
 
 export function buildRadar(snapshot) {
   const watch = new Set(snapshot.watchlist);
   const rows = snapshot.protocols.map(p => {
     const structural = structuralRisk(p), recorded = tokenRecorded(p);
-    const score = scoreProtocol(p, snapshot), plan = farmPlan(p, structural, score);
+    const score = scoreProtocol(p, snapshot), plan = farmPlan(p, structural, score, snapshot);
     return { ...p, chains: [...p.chains].sort(cmp), ...score, watchlist: watch.has(p.slug),
       token_status: recorded ? 'recorded' : 'unrecorded', structural_caution: structural, plan,
       farm_steps: plan.steps.map((step, i) => stepLabel(step, i, plan)) };

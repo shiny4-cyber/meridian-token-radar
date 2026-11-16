@@ -35,7 +35,12 @@ survives reload and can be linked. Sorting is bidirectional on every column, eig
 with first/previous/page-number/next/last controls over 95 pages. Every row opens a detail dialog
 with the full driver breakdown (TVL used, peer multiple, growth used and factor, age factor,
 structure factor, confidence, model rank vs TVL rank, peer counts and quartiles, all warnings) and a
-five-step conditional farm checklist.
+five-step conditional farm checklist. Plans are composed from the row: the chains actually listed
+(capped at three) set the fee range from a documented per-chain assumption table and drive step
+minutes; TVL sets the principal; the protocol's band and peer multiple appear in the bounded test;
+and the review date is computed from the snapshot date plus the review window and printed in the plan
+and footer. Rows without evidence get a three-step research-only plan whose last step is a dated next
+action, not a slogan.
 
 ## Model
 
@@ -50,6 +55,12 @@ model TVL to $1T. Growth factor is 1 + growth/400; maturity is 0.65 + 0.35 × �
 0.70 when the listing date is missing. Structural heuristics apply 0.50×. `rank_delta` is TVL rank
 minus model rank, a computed comparison rather than a fabricated prior snapshot.
 
+Growth uses a documented wide mapping (`1 + clamp(growth, -50, 100) / 200`, so +100% lifts value 1.5×
+and −50% cuts it to 0.75×) multiplied by a cross-sectional term of 0.90–1.10× from the row's mid-rank
+percentile among all reported seven-day moves. Because listing age stands in for operating age, every
+row also carries a sensitivity value computed at a neutral 365-day maturity, shown beside the
+listing-maturity figure so the substitution is visible rather than asserted.
+
 Confidence is `Moderate` only with category peers, 8+ samples, known growth and listing date,
 positive TVL and no structural flag; every other row is `Low` and carries at least two warnings,
 including an explicit small-sample warning. No row is labelled high confidence.
@@ -59,10 +70,10 @@ and hash code; `app.js` imports the same functions the Node tests exercise.
 
 ## Verification
 
-- `npm test`: 23 Node tests — malformed input, real coverage and ordering, plan bounds,
+- `npm test`: 29 Node tests — malformed input, real coverage and ordering, plan bounds,
   missing/zero/outlier handling, leave-one-token-out peers, peer-ratio clamping, low-confidence
-  flagging, rank-delta consistency, determinism, output-path rejection, plan uniqueness across chains,
-  fee-range arithmetic, digest tampering and research-only gating, plus filter, comparator,
+  flagging, rank-delta consistency, determinism, output-path rejection, plan uniqueness across chains, computed fees/minutes/review dates, growth sensitivity,
+  digest tampering and research-only gating, plus filter, comparator,
   pagination, hash and formatting tests over the real snapshot.
 - `tests/browser_test.py` (Playwright + Firefox, ephemeral port, server shut down afterwards):
   13 check groups — coverage line, 1440×900 density, row-click detail with all five drivers,

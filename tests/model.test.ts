@@ -76,8 +76,10 @@ test('fixed inputs give an independently calculated scenario and slug tie-break'
   const s = fixture(), p = s.protocols[0];
   p.listed_at = '2023-11-15'; p.change_7d = 100;
   const r = scoreProtocol(p, s);
-  // Three-year listing maturity, no peers: 10M * .25 * 1.25 * 1 = 3.125M.
-  assert.equal(r.implied_value_usd, 3_125_000);
+  // Three-year listing maturity, no category peers, +100% growth: 10M * .25 * 1.5 * 1.0 = 3.75M.
+  assert.equal(r.drivers.growth_factor, 1.5);
+  assert.equal(r.drivers.growth_percentile, 0.5);
+  assert.equal(r.implied_value_usd, 3_750_000);
   s.protocols.push({ ...p, slug: 'aaa' });
   assert.deepEqual(buildRadar(s).rows.map(r => r.slug), ['aaa', 'sample']);
 });

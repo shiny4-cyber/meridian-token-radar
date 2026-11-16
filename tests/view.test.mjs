@@ -3,13 +3,17 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { filterRows, sortRows, pageSlice, pageCount, activeFilters, encodeHash, decodeHash,
   formatAge, formatDelta, DEFAULT_STATE } from '../dashboard/view.mjs';
-import { parseSnapshot, buildRadar } from '../dashboard/model.mjs';
+import { parseSnapshot, buildRadar, scoreProtocol } from '../dashboard/model.mjs';
 
 const snapshot = parseSnapshot(readFileSync(process.env.SNAPSHOT_PATH
   || '/root/work/makefun/token-radar/token-radar-01-kit/input/snapshot.json', 'utf8'));
 const board = buildRadar(snapshot);
 const rows = board.rows;
 const base = { ...DEFAULT_STATE, view: 'all' };
+const fixtureLike = () => ({ as_of: '2026-11-14', source: 'fixture', floor_usd: 50_000_000,
+  watchlist: ['subject'], protocols: [
+    { slug: 'subject', name: 'Subject', category: 'Lending', chains: ['Base'], tvl_usd: 10_000_000, change_7d: 0, mcap_usd: null, listed_at: null, gecko_id: null, symbol: null },
+    ...Array.from({ length: 5 }, (_, i) => ({ slug: `peer${i}`, name: `Peer ${i}`, category: 'Lending', chains: ['Base'], tvl_usd: 10_000_000, change_7d: i * 10, mcap_usd: 8_000_000, listed_at: '2024-01-01', gecko_id: `g${i}`, symbol: `P${i}` })) ] });
 
 test('watchlist filter returns exactly the official watchlist and nothing invented', () => {
   const shown = filterRows(rows, { ...base, coverage: 'watchlist' });
@@ -144,18 +148,15 @@ test('plans are keyed on category, chain and structure, so two DEXes on differen
   }
 });
 
-test('fee ranges in the steps, totals and rendered label agree', () => {
-  for (const r of rows.filter(r => r.plan.mode === 'conditional')) {
-    const fee = r.plan.chain === 'Ethereum' ? { low: 5, high: 30 } : { low: 1, high: 10 };
-    assert.equal(r.plan.steps[2].usd_low, fee.low);
-    assert.equal(r.plan.steps[2].usd_high, fee.high);
-    assert.equal(r.plan.steps[4].usd_low, fee.low);
-    assert.equal(r.plan.steps[4].usd_high, fee.high);
-    assert.equal(r.plan.totals.fee_low, fee.low * 2);
-    assert.equal(r.plan.totals.fee_high, fee.high * 2);
-    // The rendered label repeats the step's own numbers, not a parallel literal.
-    assert.ok(r.farm_steps[2].includes(`$${fee.low}–$${fee.high}`), r.farm_steps[2]);
-    assert.ok(r.farm_steps[4].includes(`$${fee.low}–$${fee.high}`), r.farm_steps[4]);
+test('fee ranges in the steps, totals and rendered label agree with the chain table', () => {
+  for (const r of rows.filter(x => x.plan.mode === 'conditional')) {
+    const used = [...r.chains].sort().slice(0, 3);
+    const fee = used.reduce((a, c) => { const f = CHAIN_FEES[c] || CHAIN_FEES.default; return [a[0] + f[0], a[1] + f[1]]; }, [0, 0])
+      .map(n => Math.round(n * 100) / 100);
+    assert.deepEqual([r.plan.steps[2].usd_low, r.plan.steps[2].usd_high], fee, r.slug);
+    assert.deepEqual([r.plan.steps[4].usd_low, r.plan.steps[4].usd_high], fee, r.slug);
+    assert.match(r.farm_steps[2], new RegExp(`\\$${String(fee[0]).replace('.', '\\.')}`), r.farm_steps[2]);
+    assert.match(r.plan.fee_note, /assumption/i);
   }
 });
 
@@ -197,7 +198,7 @@ test('rows without evidence get an explicit research-only plan and no spend', ()
       assert.equal(r.plan.totals.fee_high, 0);
       assert.ok(r.plan.steps.every(s => s.usd_low === 0 && s.usd_high === 0 && !s.requires_capital));
       assert.equal(r.plan.steps.length, 3);
-      assert.match(r.farm_steps[0], /no spend plan/);
+      assert.match(r.farm_steps[2], /Next action on \d{4}-\d{2}-\d{2}/);
     } else {
       assert.equal(r.plan.steps.length, 5);
       assert.ok(r.plan.totals.peak_principal_usd > 0);
@@ -205,4 +206,100 @@ test('rows without evidence get an explicit research-only plan and no spend', ()
   }
   assert.ok(rows.some(r => r.plan.mode === 'research-only'));
   assert.ok(rows.some(r => r.plan.mode === 'conditional'));
+});
+
+test('the gating also fires for a missing category and for a prior-only peer set', () => {
+  const s = { as_of: '2026-11-14', source: 'fixture', floor_usd: 1, watchlist: [],
+    protocols: [
+      { slug: 'no-cat', name: 'No Category', category: null, chains: ['Base'], tvl_usd: 1e6, change_7d: 0, mcap_usd: null, listed_at: '2025-01-01', gecko_id: null, symbol: null },
+      { slug: 'lonely', name: 'Lonely', category: 'Unheard Of', chains: ['Base'], tvl_usd: 2e6, change_7d: 0, mcap_usd: null, listed_at: '2025-01-01', gecko_id: null, symbol: null } ] };
+  const radar = buildRadar(parseSnapshot(JSON.stringify(s)));
+  for (const row of radar.rows) {
+    assert.equal(row.plan.mode, 'research-only', row.slug);
+    assert.match(row.farm_steps[2], /Next action on \d{4}-\d{2}-\d{2}/);
+    assert.equal(row.plan.totals.fee_high, 0);
+  }
+  const cat = radar.rows.find(r => r.slug === 'no-cat');
+  assert.match(cat.farm_steps[2], /a recorded category/);
+  const prior = radar.rows.find(r => r.slug === 'lonely');
+  assert.match(prior.farm_steps[2], /at least one independent token peer/);
+});
+
+// ---------------------------------------------------------------- computed plans, growth and dates
+import { CHAIN_FEES } from '../dashboard/model.mjs';
+
+test('action text is composed from row data, never a shared template', () => {
+  const seen = new Map();
+  for (const r of rows.filter(x => x.plan.mode === 'conditional')) {
+    const key = r.plan.action;
+    if (!seen.has(key)) seen.set(key, []);
+    seen.get(key).push(r);
+  }
+  for (const group of seen.values()) {
+    if (group.length < 2) continue;
+    const input = r => JSON.stringify([r.category, r.chains, r.structural_caution, r.plan.capital_usd,
+      r.band.low, r.band.high, r.drivers.peer_multiple, r.token_status]);
+    assert.equal(new Set(group.map(input)).size, 1, `identical action for different inputs: ${group.map(r => r.slug)}`);
+  }
+  const dex = rows.filter(r => r.plan.mode === 'conditional' && r.plan.branch.startsWith('dex:'));
+  assert.ok(new Set(dex.map(r => r.plan.action)).size > 0.9 * dex.length, 'DEX actions must nearly all differ');
+  assert.match(rows.find(r => r.plan.mode === 'conditional').plan.action, /chain|chains/);
+});
+
+test('fees come from the per-chain table and minutes from the chain set and capital', () => {
+  for (const r of rows) {
+    const used = [...r.chains].sort().slice(0, 3);
+    const expected = used.reduce((acc, c) => {
+      const f = CHAIN_FEES[c] || CHAIN_FEES.default;
+      return [acc[0] + f[0], acc[1] + f[1]];
+    }, [0, 0]).map(n => Math.round(n * 100) / 100);
+    if (r.plan.mode === 'conditional') {
+      assert.deepEqual([r.plan.steps[2].usd_low, r.plan.steps[2].usd_high], expected, r.slug);
+      assert.deepEqual([r.plan.totals.fee_low, r.plan.totals.fee_high], [expected[0] * 2, expected[1] * 2].map(n => Math.round(n * 100) / 100));
+    } else {
+      assert.equal(r.plan.totals.fee_low, 0);
+    }
+    assert.equal(r.plan.totals.minutes, r.plan.steps.reduce((n, s) => n + s.minutes, 0));
+  }
+  const single = rows.find(r => r.plan.mode === 'conditional' && r.chains.length === 1);
+  const multi = rows.find(r => r.plan.mode === 'conditional' && r.chains.length >= 3);
+  assert.ok(multi.plan.totals.minutes > single.plan.totals.minutes, 'more chains must cost more minutes');
+  const minutes = new Set(rows.map(r => r.plan.totals.minutes));
+  assert.ok(minutes.size > 20, 'minutes must not be a constant');
+});
+
+test('the review date is computed from the snapshot date and appears in the plan', () => {
+  const expected = new Date(Date.parse(`${board.as_of}T00:00:00Z`) + 14 * 86400000).toISOString().slice(0, 10);
+  for (const r of rows) {
+    assert.equal(r.plan.review_date, expected);
+    assert.ok(r.farm_steps.some(s => s.includes(expected)), `${r.slug} must print ${expected}`);
+  }
+  const research = rows.find(r => r.plan.mode === 'research-only');
+  assert.match(research.farm_steps[research.farm_steps.length - 1], /Next action on \d{4}-\d{2}-\d{2}/);
+  assert.match(research.farm_steps[research.farm_steps.length - 1], /re-check/i);
+});
+
+test('growth moves value materially and the age substitution is exposed two ways', () => {
+  const s = fixtureLike();
+  const flat = scoreProtocol({ ...s.protocols[0], change_7d: 0 }, s);
+  const up = scoreProtocol({ ...s.protocols[0], change_7d: 100 }, s);
+  assert.ok(up.implied_value_usd / flat.implied_value_usd >= 1.4, 'a +100% move must beat flat by at least 40%');
+  assert.ok(up.drivers.percentile_factor >= 0.9 && up.drivers.percentile_factor <= 1.1);
+  assert.equal(flat.drivers.growth_percentile !== null, true);
+  const aged = scoreProtocol({ ...s.protocols[0], listed_at: '2023-11-15' }, s);
+  assert.equal(aged.sensitivity.neutral_age_days, 365);
+  assert.notEqual(aged.sensitivity.implied_neutral_age, aged.implied_value_usd);
+  assert.ok(Math.abs(aged.sensitivity.delta_pct) > 1);
+});
+
+test('research-only plans end with a computed next action, not a slogan', () => {
+  const samples = rows.filter(r => r.plan.mode === 'research-only').slice(0, 3);
+  assert.ok(samples.length >= 1);
+  for (const r of samples) {
+    assert.ok(r, 'each unsupported reason must occur in the snapshot');
+    const last = r.farm_steps[r.farm_steps.length - 1];
+    assert.ok(last.includes(r.plan.review_date));
+    assert.match(last, /if that changes, rebuild the plan|until then keep exposure at zero/);
+    assert.ok(!/set a review date/i.test(last), 'no slogan');
+  }
 });

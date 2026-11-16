@@ -113,6 +113,8 @@ tr:hover{background:#223127}
 .inspect-category{font-size:10px;color:var(--muted);margin-bottom:7px}
 .plan-tag{font:8px var(--mono);color:var(--mint);margin-bottom:12px}
 .plan-tag.research-only{color:var(--amber)}
+.sens{font:9px var(--mono);color:var(--amber);margin-bottom:10px;line-height:1.5}
+.sens-block{color:#c4cdbb;border-left:2px solid var(--line2);padding-left:8px}
 .inspect-value-label{font-size:10px;color:var(--muted)}
 .inspect-value{font:27px var(--mono);letter-spacing:-1px;color:var(--mint)}
 .range-label{font-size:8px;color:var(--muted);margin:6px 0 4px}

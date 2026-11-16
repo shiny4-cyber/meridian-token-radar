@@ -125,12 +125,16 @@ try:
             assert totals[0] == f"{plan['totals']['minutes']} min", totals
             assert totals[1] == f"${plan['totals']['fee_low']}–${plan['totals']['fee_high']}", totals
             assert len(page.locator('.checklist li').all()) == len(plan['steps'])
+            assert plan['review_date'] in panel, 'review date must be rendered'
+            assert 'Per-chain fee assumption' in panel
+            assert 'Age sensitivity' in panel and 'neutral' in panel
             page.keyboard.press('Escape')
             page.locator('[data-view="all"]').click()
             page.locator('#coverage').select_option('structural')
             page.locator('#rows .protocol-button').first.click()
             research = page.locator('#detail').inner_text()
             assert 'RESEARCH ONLY' in research and 'No capital' in research
+            assert 'NEXT ACTION' in research and 'Next action on' in research
             assert page.locator('.plan-totals dd').all_text_contents()[2] == 'No capital'
             page.keyboard.press('Escape')
             page.locator('#reset').click()
