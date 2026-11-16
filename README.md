@@ -1,5 +1,9 @@
 # Meridian — Token Radar
 
+[![make.fun · token-radar-01](https://make.fun/badge/token-radar-01.svg)](https://make.fun/bounty/token-radar-01)
+[![rank](https://make.fun/badge/token-radar-01/shiny4-cyber/meridian-token-radar/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard)
+[![reward](https://make.fun/badge/token-radar-01/shiny4-cyber/meridian-token-radar/reward.svg)](https://make.fun/bounty/token-radar-01)
+
 An offline research workspace over the sealed token-radar-01 snapshot: 758 ranked protocols, all 40
 watchlist protocols covered, plus 718 below-watchlist protocols the snapshot supports. Ranking,
 uncertainty and farm plans are computed from the snapshot's own fields; nothing financial is typed
