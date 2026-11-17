@@ -70,9 +70,10 @@ and hash code; `app.js` imports the same functions the Node tests exercise.
 
 ## Verification
 
-- `npm test`: 29 Node tests — malformed input, real coverage and ordering, plan bounds,
+- `npm test`: 32 Node tests — malformed input, real coverage and ordering, plan bounds,
   missing/zero/outlier handling, leave-one-token-out peers, peer-ratio clamping, low-confidence
   flagging, rank-delta consistency, determinism, output-path rejection, plan uniqueness across chains, computed fees/minutes/review dates, growth sensitivity,
+  spec/prose agreement, published-formula recomputation and the age drop-and-renormalise path,
   digest tampering and research-only gating, plus filter, comparator,
   pagination, hash and formatting tests over the real snapshot.
 - `tests/browser_test.py` (Playwright + Firefox, ephemeral port, server shut down afterwards):

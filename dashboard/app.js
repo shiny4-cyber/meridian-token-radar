@@ -1,15 +1,13 @@
-// Every number is read from records.dat (exact board.json bytes from model.mjs) and formatted by view.mjs.
+
 import { filterRows, sortRows, pageSlice, pageCount, activeFilters, encodeHash, decodeHash,
   formatUsd, formatExact, formatPct, formatFactor, formatAge, formatDelta, stepLabel,
-  assertCoverage, DEFAULT_STATE } from './view.mjs';
-
+  assertCoverage, MODEL_SPEC, formulaText, methodSections, DEFAULT_STATE } from './view.mjs';
 const $ = id => document.getElementById(id);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const PAGE_SIZE = 8;
 const state = { ...DEFAULT_STATE };
 const checked = new Map(); // session-only checklist state
 let data, filtered = [], focusReturn = null;
-
 function badge(r) {
   const why = r.confidence === 'Low' ? 'Low confidence' : 'Moderate confidence';
   return `<span class="badge ${r.confidence.toLowerCase()}" title="${why}: ${esc(r.drivers.peer_count)} peer observations, ${esc(r.drivers.peer_basis)}">${esc(r.confidence)}</span>`;
@@ -75,13 +73,12 @@ function render() {
   $('rows').innerHTML = page.rows.map(r => `<tr data-slug="${esc(r.slug)}" data-detail="${esc(r.slug)}" class="${r.slug === state.selected ? 'selected' : ''}">
     <td class="rank-cell">${String(r.rank).padStart(3, '0')}</td>
     <td><button class="protocol-button" data-detail="${esc(r.slug)}">${esc(r.name)}${r.watchlist ? '<span class="watch-dot" title="Official watchlist"></span>' : ''}<span class="sr-only"> — open protocol detail</span></button><span class="protocol-meta">${esc(r.category || 'Unclassified')} · ${esc(r.chains[0] || 'Chain unknown')}${r.chains.length > 1 ? ` +${r.chains.length - 1}` : ''}${r.structural_caution ? ' · Caution' : ''}${r.plan.mode === 'research-only' ? ' · Research only' : ''}</span></td>
-    <td class="numeric" title="${formatExact(r.tvl_usd)}">${formatUsd(r.tvl_usd)}</td>
+    <td class="numeric">${formatUsd(r.tvl_usd)}</td>
     <td class="numeric ${r.change_7d >= 0 ? 'up' : 'down'}">${formatPct(r.change_7d)}</td>
-    <td class="numeric scenario" title="${formatExact(r.implied_value_usd)}">${formatUsd(r.implied_value_usd)}<small>${formatUsd(r.band.low)} – ${formatUsd(r.band.high)}</small></td>
+    <td class="numeric scenario">${formatUsd(r.implied_value_usd)}<small>${formatUsd(r.band.low)} – ${formatUsd(r.band.high)}</small></td>
     <td class="numeric delta ${r.rank_delta > 0 ? 'up' : r.rank_delta < 0 ? 'down' : ''}" title="Model rank ${r.rank} vs TVL rank ${r.tvl_rank}">${formatDelta(r.rank_delta)}</td>
     <td class="numeric age">${formatAge(r.age_days)}</td>
     <td class="confidence-col">${badge(r)}</td></tr>`).join('');
-  $('empty').hidden = filtered.length !== 0;
   $('page-label').textContent = filtered.length ? `${page.first}–${page.last} of ${filtered.length} · Page ${page.page + 1}/${page.pages}` : '0 records';
   $('page-input').max = String(page.pages); $('page-input').value = String(page.page + 1);
   $('prev').disabled = page.page === 0; $('next').disabled = page.page >= page.pages - 1;
@@ -90,21 +87,7 @@ function render() {
     button.parentElement.removeAttribute('aria-sort');
     if (button.dataset.sort === state.sort) button.parentElement.setAttribute('aria-sort', state.direction === 1 ? 'ascending' : 'descending');
   });
-  writeHash(); renderPreview();
-}
-function renderPreview() {
-  const r = data.rows.find(row => row.slug === state.selected);
-  if (!r) { $('inspector').innerHTML = '<h3>No selection</h3><p class="muted">Adjust the filters to inspect a protocol.</p>'; return; }
-  const d = r.drivers;
-  $('inspector').innerHTML = `<div class="inspector-kicker"><span>RESEARCH BRIEF</span><span>#${r.rank} · TVL #${r.tvl_rank}</span></div>
-    <div class="protocol-icon" aria-hidden="true">${esc(r.name.slice(0, 2).toUpperCase())}</div><h3 class="inspect-title">${esc(r.name)}</h3>
-    <p class="inspect-category">${esc(r.category || 'Unclassified')} · ${r.watchlist ? 'Official watchlist' : 'Extended coverage'} · ${esc(formatAge(r.age_days))}</p>
-    <p class="plan-tag ${r.plan.mode}">${r.plan.mode === 'research-only' ? 'Research only · no spend plan' : 'Conditional test plan'} · ${r.plan.totals.minutes} min · fees $${r.plan.totals.fee_low}–$${r.plan.totals.fee_high} · review ${r.plan.review_date}</p>
-    <p class="sens">Age check: ${formatUsd(r.implied_value_usd)} at listing maturity vs ${formatUsd(r.sensitivity.implied_neutral_age)} at neutral ${r.sensitivity.neutral_age_days}d (${formatPct(r.sensitivity.delta_pct)})</p>
-    <div class="inspect-value-label">Scenario market capitalization</div><div class="inspect-value">${formatUsd(r.implied_value_usd)}</div>
-    <div class="range-label">ILLUSTRATIVE RANGE · NOT A FORECAST</div><div class="range-track" aria-hidden="true"></div><div class="range-numbers"><span>${formatUsd(r.band.low)}</span><span>${formatUsd(r.band.high)}</span></div>
-    <div class="preview-facts"><div><span>Evidence</span>${badge(r)}</div><div><span>Peer multiple</span><strong>${formatFactor(d.peer_multiple)}</strong></div><div><span>Growth factor</span><strong>${formatFactor(d.growth_factor)}</strong></div><div><span>Age factor</span><strong>${formatFactor(d.age_factor)}</strong></div></div>
-    <p class="caution">${esc(r.warnings[0])}</p><button class="primary" data-detail="${esc(r.slug)}">Open research & farm plan →</button>`;
+  writeHash();
 }
 function openDialog(id) { if (id !== 'detail') focusReturn = document.activeElement; $(id).showModal(); }
 function closeDialog(id) { $(id).close(); }
@@ -112,7 +95,6 @@ function showDetail(slug) {
   const r = data.rows.find(row => row.slug === slug); if (!r) return;
   focusReturn = document.activeElement; state.selected = slug;
   document.querySelectorAll('#rows tr').forEach(tr => tr.classList.toggle('selected', tr.dataset.slug === slug));
-  renderPreview();
   const d = r.drivers, done = checked.get(slug) || new Set();
   const kpis = [['Snapshot TVL', formatUsd(r.tvl_usd)], ['Observed market cap', formatUsd(r.mcap_usd)],
     ['7-day TVL change', formatPct(r.change_7d)], ['Days since listing', r.age_days ?? 'Unknown']];
@@ -128,10 +110,10 @@ function showDetail(slug) {
       <dl class="detail-kpis">${kpis.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>
       <h3>Full driver breakdown</h3><ul class="factor-list">${drivers.map(([k, v]) =>
         `<li><span>${k}</span><b class="${k === 'Confidence' && r.confidence === 'Low' ? 'low-flag' : ''}">${v}</b></li>`).join('')}</ul>
-      <p class="note">${esc(d.peer_basis)} · ${d.peer_count} peers used · ${d.category_peer_count} same-category peers · peer quartiles ${formatFactor(d.peer_q25)} / ${formatFactor(d.peer_q75)}. Multipliers shown rounded; the calculation uses full precision.</p>
+      <p class="note">${esc(d.peer_basis)} · ${d.peer_count} peers · ${d.category_peer_count} same-category · quartiles ${formatFactor(d.peer_q25)} / ${formatFactor(d.peer_q75)}. Rounded for display; the score uses the published factors.</p>
       <details><summary>Inspect ${d.peer_count} comparable records</summary><div class="peer-list">${d.peer_slugs.map(esc).join(' · ') || 'No available peers; 0.25× prior used.'}</div></details>
       <details><summary>All ${r.warnings.length} warnings & source fields</summary><p>Slug: ${esc(r.slug)}<br>Listed: ${esc(r.listed_at || 'Unknown')}<br>Symbol: ${esc(r.symbol || 'Not recorded')}<br>CoinGecko ID: ${esc(r.gecko_id || 'Not recorded')}<br>Raw market cap: ${r.mcap_usd === null ? 'null' : esc(r.mcap_usd)}<br>FDV: not supplied<br>Watchlist: ${r.watchlist ? 'Yes' : 'No'}</p><ul class="warning-list">${r.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></details>
-      <p class="caution">Listing history is not operating age. Range is a sensitivity scenario, not a probability interval or expected reward.</p>
+      <p class="caution">Age is days since the snapshot's first record for this protocol, a lower bound on operating age: maturity may be understated, never overstated. ${r.drivers.age_dropped ? 'No first record exists, so that factor is dropped and the value renormalised.' : ''} Range is a sensitivity scenario, not a probability interval or expected reward.</p>
     </section><section class="detail-plan"><div class="plan-heading"><h3>${r.plan.mode === 'research-only' ? 'Research checklist' : 'Farm research checklist'}</h3><span id="check-progress">${done.size}/${r.plan.steps.length} reviewed</span></div>
       <p class="plan-mode ${r.plan.mode}">${r.plan.mode === 'research-only' ? 'RESEARCH ONLY — no spend plan' : 'CONDITIONAL TEST PLAN'} · ${esc(r.plan.reason)}</p>
       <p class="planning-label">${esc(r.plan.label)}</p>
@@ -165,7 +147,7 @@ function bind() {
     const key = button.dataset.sort; state.direction = key === state.sort ? -state.direction : key === 'name' || key === 'rank' ? 1 : -1;
     state.sort = key; state.page = 0; render();
   }));
-  ['reset', 'empty-reset'].forEach(id => $(id).addEventListener('click', reset));
+  $('reset').addEventListener('click', reset);
   $('prev').addEventListener('click', () => { state.page--; render(); });
   $('next').addEventListener('click', () => { state.page++; render(); });
   $('first').addEventListener('click', () => { state.page = 0; render(); });
@@ -216,6 +198,9 @@ async function start() {
     data = await response.json();
     if (data.schema !== 'meridian-radar/v1' || !Array.isArray(data.rows) || !data.rows.length) throw new Error('Invalid board data');
     assertCoverage(data.summary, data.rows);
+    $('formula').textContent = formulaText(MODEL_SPEC);
+    $('method-grid').innerHTML = methodSections(MODEL_SPEC).map(s => `<section><span class="step-label">${esc(s.label)}</span><h3>${esc(s.title)}</h3><p>${esc(s.body)}</p></section>`).join('');
+    $('model-version').textContent = MODEL_SPEC.version.toUpperCase();
     summary(); selectOptions('category', data.rows.map(r => r.category || 'Unclassified'));
     selectOptions('chain', data.rows.flatMap(r => r.chains)); bind(); applyHash(); render();
     document.documentElement.dataset.ready = 'true';

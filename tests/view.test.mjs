@@ -303,3 +303,55 @@ test('research-only plans end with a computed next action, not a slogan', () => 
     assert.ok(!/set a review date/i.test(last), 'no slogan');
   }
 });
+
+// ---------------------------------------------------------------- published arithmetic
+import { MODEL_SPEC, formulaText, methodSections, publishedScore } from '../dashboard/view.mjs';
+
+test('the methodology prose and the computation read one specification', () => {
+  const text = formulaText(MODEL_SPEC);
+  const g = MODEL_SPEC.growth;
+  assert.ok(text.includes(`/${g.divisor}`));
+  assert.ok(text.includes(`1 + clamp(g, ${g.floor}, +${g.cap})`) || text.includes('clamp(g'));
+  assert.ok(text.includes(`${1 + g.cap / g.divisor}×`) || text.includes('1.5×'));
+  assert.ok(methodSections(MODEL_SPEC).every(s => s.body.length > 80));
+  // A changed constant changes both the prose and the score: they cannot drift apart.
+  const spec = { ...MODEL_SPEC, growth: { ...g, divisor: 250 } };
+  assert.ok(formulaText(spec).includes('/250'));
+  const s = fixtureLike();
+  const base = scoreProtocol({ ...s.protocols[0], change_7d: 100 }, s);
+  const moved = scoreProtocol({ ...s.protocols[0], change_7d: 100 }, s, spec);
+  assert.equal(moved.drivers.growth_factor, 1.4);
+  assert.ok(moved.implied_value_usd < base.implied_value_usd);
+  // The dialog carries no hand-typed copy of the formula: it is generated into these containers.
+  const html = readFileSync(new URL('../dashboard/index.html', import.meta.url), 'utf8');
+  assert.ok(html.includes('id="formula"') && html.includes('id="method-grid"'));
+  assert.ok(!/1 \+ clamp|peer multiple \(/.test(html), 'formula prose must not be hard-coded in HTML');
+});
+
+test('a published score can be recomputed from the published factors alone', () => {
+  for (const row of [rows[0], rows[100], rows[757]]) {
+    const d = row.drivers;
+    const manual = d.tvl_used * d.peer_multiple * d.growth_factor * d.percentile_factor
+      * d.age_factor * d.structure_factor * (d.age_dropped ? d.renorm_applied : 1);
+    assert.equal(Math.max(1, Math.round(Math.min(manual, 1e14))), row.implied_value_usd, row.slug);
+    assert.equal(publishedScore(row), row.implied_value_usd);
+  }
+  assert.equal(publishedScore({ ...rows[0], implied_value_usd: 1 }), null);
+});
+
+test('the age factor uses the first record, and drops out with renormalisation when absent', () => {
+  const known = rows.filter(r => !r.drivers.age_dropped);
+  const unknown = rows.filter(r => r.drivers.age_dropped);
+  assert.ok(known.length > 600 && unknown.length > 50);
+  for (const r of unknown.slice(0, 20)) {
+    assert.equal(r.drivers.age_factor, 1);
+    assert.equal(r.drivers.renorm_applied, MODEL_SPEC.renorm);
+    assert.equal(r.age_days, null);
+    assert.equal(r.confidence, 'Low');
+  }
+  for (const r of known.slice(0, 20)) {
+    assert.equal(r.drivers.renorm_applied, 1);
+    assert.ok(r.drivers.age_factor >= MODEL_SPEC.maturity.floor - 1e-6 && r.drivers.age_factor <= 1 + 1e-6);
+    assert.ok(r.drivers.age_source.startsWith('first snapshot record'));
+  }
+});

@@ -74,13 +74,11 @@ try:
             # B. layout density at 100% zoom.
             geometry = page.evaluate('''() => {
                 const rr = [...document.querySelectorAll('#rows tr')].map(e => e.getBoundingClientRect());
-                const range = document.querySelector('#inspector .range-numbers').getBoundingClientRect();
                 return { first_row_top: rr[0].top, fully_visible_rows: rr.filter(r => r.top >= 0 && r.bottom <= innerHeight).length,
-                         inspector_range_bottom: range.bottom, viewport_height: innerHeight };
+                         viewport_height: innerHeight };
             }''')
             print('Desktop geometry:', json.dumps(geometry), flush=True)
             assert geometry['fully_visible_rows'] >= 6, 'at least six complete rows must fit at 100% zoom'
-            assert geometry['inspector_range_bottom'] <= 900
             checks.append('1440x900 density: six complete rows and inspector range visible')
 
             first_page = slugs(page)

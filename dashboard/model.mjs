@@ -1,5 +1,4 @@
-import { coverageProof, stepLabel, planTotals } from './view.mjs';
-// Meridian model v1: pure functions, no clock, network, randomness or ranked-name overrides.
+import { coverageProof, stepLabel, planTotals, MODEL_SPEC, publishedScore } from './view.mjs';
 const cmp = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 const money = n => Math.round(clamp(n, 1, 1e14));
@@ -7,7 +6,6 @@ const round = n => Math.round(n * 1e6) / 1e6;
 const validDate = s => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s)
   && Number.isFinite(Date.parse(s)) && new Date(s).toISOString().slice(0, 10) === s;
 const fail = field => { throw new Error(`Invalid snapshot: ${field}`); };
-
 export function parseSnapshot(text) {
   let s;
   try { s = JSON.parse(text); } catch { fail('not JSON'); }
@@ -34,7 +32,6 @@ export function parseSnapshot(text) {
   if (!Array.isArray(s.watchlist) || new Set(s.watchlist).size !== s.watchlist.length || s.watchlist.some(x => !slugs.has(x))) fail('watchlist');
   return s;
 }
-
 export function tokenRecorded(p) {
   return p.gecko_id !== null || p.symbol !== null || p.mcap_usd !== null;
 }
@@ -50,9 +47,7 @@ export function quantile(values, q) {
   const lo = Math.floor(at), hi = Math.ceil(at);
   return a[lo] + (a[hi] - a[lo]) * (at - lo);
 }
-
-function comparablePool(protocols, p) {
-  // Deduplicate shared token IDs: a pool clone is not independent evidence.
+function comparablePool(protocols, p, spec = MODEL_SPEC) {
   const tokenKey = x => x.gecko_id ? `gecko:${x.gecko_id}` : x.symbol ? `symbol:${x.symbol.toUpperCase()}` : `slug:${x.slug}`;
   const ownToken = tokenKey(p);
   const eligible = protocols.filter(x => x.slug !== p.slug && tokenRecorded(x)
@@ -67,18 +62,15 @@ function comparablePool(protocols, p) {
   }
   const same = unique(eligible.filter(x => p.category !== null && x.category === p.category));
   const global = unique(eligible);
-  const pool = same.length >= 4 ? same : global;
-  const ratios = pool.map(x => clamp(x.mcap_usd / x.tvl_usd, 0.05, 5));
+  const pool = same.length >= spec.peer.min_category ? same : global;
+  const ratios = pool.map(x => clamp(x.mcap_usd / x.tvl_usd, spec.peer.clip_low, spec.peer.clip_high));
   return { n: pool.length, category_n: same.length,
-    basis: same.length >= 4 ? 'category' : global.length ? 'global fallback' : 'conservative prior',
-    multiple: quantile(ratios, 0.5) ?? 0.25,
-    q25: quantile(ratios, 0.25) ?? 0.1, q75: quantile(ratios, 0.75) ?? 0.5,
+    basis: same.length >= spec.peer.min_category ? 'category' : global.length ? 'global fallback' : 'conservative prior',
+    multiple: quantile(ratios, 0.5) ?? spec.peer.prior,
+    q25: quantile(ratios, 0.25) ?? spec.peer.clip_low * 2, q75: quantile(ratios, 0.75) ?? spec.peer.clip_high / 10,
     slugs: pool.map(x => x.slug).sort(cmp) };
 }
-
 export const NEUTRAL_AGE_DAYS = 365;
-
-/** Mid-rank percentile of one 7-day move among the rows that report one; null when it reports none. */
 export function growthPercentile(protocols, value) {
   if (value === null || value === undefined) return null;
   let below = 0, equal = 0, total = 0;
@@ -89,73 +81,71 @@ export function growthPercentile(protocols, value) {
   }
   return total ? (below + equal / 2) / total : null;
 }
-
-export function scoreProtocol(p, snapshot) {
-  const peers = comparablePool(snapshot.protocols, p);
+export function scoreProtocol(p, snapshot, spec = MODEL_SPEC) {
+  const peers = comparablePool(snapshot.protocols, p, spec);
   const age = p.listed_at === null ? null : Math.floor((Date.parse(snapshot.as_of) - Date.parse(p.listed_at)) / 86400000);
-  const growth = clamp(p.change_7d ?? 0, -50, 100);
-  // Documented mapping: +100% growth lifts value 1.5x, -50% cuts it to 0.75x.
-  const growthFactor = 1 + growth / 200;
-  // Cross-sectional term: mid-rank percentile of this move among reported rows, 0.90x..1.10x.
+  const growth = clamp(p.change_7d ?? 0, spec.growth.floor, spec.growth.cap);
+  const growthFactor = round(1 + growth / spec.growth.divisor);
   const pct = growthPercentile(snapshot.protocols, p.change_7d);
-  const percentileFactor = pct === null ? 1 : 0.9 + 0.2 * pct;
-  const growthCombined = growthFactor * percentileFactor;
-  const ageFactor = age === null ? 0.70 : 0.65 + 0.35 * Math.sqrt(Math.min(age, 1095) / 1095);
-  const neutralAgeFactor = 0.65 + 0.35 * Math.sqrt(Math.min(NEUTRAL_AGE_DAYS, 1095) / 1095);
+  const percentileFactor = pct === null ? 1 : round(spec.percentile.base + spec.percentile.span * pct);
+  const ageDropped = age === null;
+  const ageFactor = round(ageDropped ? 1 : spec.maturity.floor
+    + spec.maturity.range * Math.sqrt(Math.min(age, spec.maturity.horizon) / spec.maturity.horizon));
+  const renorm = ageDropped ? spec.renorm : 1;
   const structural = structuralRisk(p);
-  const structureFactor = structural ? 0.5 : 1;
-  const tvl = Math.min(p.tvl_usd, 1e12);
-  const implied = money(tvl * peers.multiple * growthCombined * ageFactor * structureFactor);
-  const impliedNeutral = money(tvl * peers.multiple * growthCombined * neutralAgeFactor * structureFactor);
-  const lowConfidence = peers.basis !== 'category' || peers.n < 8 || age === null || p.change_7d === null || structural || tvl === 0;
-  const confidence = lowConfidence ? 'Low' : 'Moderate'; // a label, not an interval
+  const structureFactor = structural ? spec.structural : 1;
+  const tvl = Math.min(p.tvl_usd, spec.tvl_cap);
+  const multiple = round(peers.multiple);
+  const implied = money(tvl * multiple * growthFactor * percentileFactor * ageFactor * structureFactor * renorm);
+  const neutralFactor = round(spec.maturity.floor + spec.maturity.range
+    * Math.sqrt(Math.min(spec.neutral_age_days, spec.maturity.horizon) / spec.maturity.horizon));
+  const impliedNeutral = money(tvl * multiple * growthFactor * percentileFactor
+    * (ageDropped ? 1 : neutralFactor) * structureFactor * renorm);
+  const lowConfidence = peers.basis !== 'category' || peers.n < 8 || ageDropped || p.change_7d === null || structural || tvl === 0;
+  const confidence = lowConfidence ? 'Low' : 'Moderate';
   const uncertainty = lowConfidence ? 2.5 : 1.7;
   const lowFactor = Math.min(1 / uncertainty, peers.q25 / peers.multiple);
   const highFactor = Math.max(uncertainty, peers.q75 / peers.multiple);
   const warnings = [];
-  if (!tokenRecorded(p)) warnings.push('No token recorded is not proof of no token or a future launch.');
+  if (!tokenRecorded(p)) warnings.push('No token recorded is not proof of no token or a launch.');
   else warnings.push('Token metadata recorded: a benchmark, not a pre-launch opportunity.');
-  if (structural) warnings.push('Wrapper, bridge, exchange or versioned-product heuristic: token value may belong to a parent or underlying asset.');
-  if (age === null) warnings.push('Listing date missing; maturity uses a conservative 0.70 factor.');
-  if (p.change_7d === null) warnings.push('Seven-day growth missing; neutral growth factor, lower confidence.');
-  if (p.change_7d !== null && growth !== p.change_7d) warnings.push('Growth clipped to [-50%, +100%] to suppress outliers.');
-  if (p.tvl_usd > tvl) warnings.push('Model TVL capped at $1 trillion; raw TVL retained.');
+  if (structural) warnings.push('Wrapper, bridge, exchange or versioned-product heuristic: value may belong to a parent asset.');
+  if (ageDropped) warnings.push(`No first record: the age factor is dropped and value renormalised by ${spec.renorm}x, not imputed.`);
+  if (p.change_7d === null) warnings.push('Seven-day growth missing; neutral factor, lower confidence.');
+  if (p.change_7d !== null && growth !== p.change_7d) warnings.push(`Growth clipped to [${spec.growth.floor}%, ${spec.growth.cap}%] to suppress outliers.`);
+  if (p.tvl_usd > tvl) warnings.push('Model TVL capped at $1T; raw TVL retained.');
   if (tvl === 0) warnings.push('Zero TVL: $1 ranking floor, not a meaningful valuation.');
-  if (peers.basis !== 'category') warnings.push('Insufficient independent same-category peers; broad fallback is less comparable.');
-  if (peers.n < 8) warnings.push(`Only ${peers.n} independent peer observation${peers.n === 1 ? '' : 's'}: the peer multiple is a weak anchor, so this row is low confidence.`);
+  if (peers.basis !== 'category') warnings.push('Too few same-category peers; broad fallback is less comparable.');
+  if (peers.n < 8) warnings.push(`Only ${peers.n} independent peer${peers.n === 1 ? '' : 's'}: a weak anchor, so low confidence.`);
   return { implied_value_usd: implied, age_days: age, confidence,
-    sensitivity: { neutral_age_days: NEUTRAL_AGE_DAYS, neutral_age_factor: round(neutralAgeFactor),
+    sensitivity: { neutral_age_days: spec.neutral_age_days, neutral_age_factor: neutralFactor,
       implied_neutral_age: impliedNeutral,
       delta_pct: round(((implied - impliedNeutral) / impliedNeutral) * 100) },
     band: { low: money(implied * lowFactor), high: money(implied * highFactor), label: 'Scenario range, not a probability interval' },
-    drivers: { tvl_used: tvl, peer_multiple: round(peers.multiple), growth_used: growth,
-      growth_factor: round(growthFactor), growth_percentile: pct === null ? null : round(pct),
-      percentile_factor: round(percentileFactor), growth_combined: round(growthCombined),
-      age_factor: round(ageFactor), structure_factor: structureFactor,
+    drivers: { tvl_used: tvl, peer_multiple: multiple, growth_used: growth,
+      growth_factor: growthFactor, growth_percentile: pct === null ? null : round(pct),
+      percentile_factor: percentileFactor, age_factor: ageFactor, age_dropped: ageDropped,
+      age_source: 'first snapshot record (lower bound on operating age)', renorm_applied: renorm,
+      structure_factor: structureFactor,
       peer_basis: peers.basis, peer_count: peers.n, category_peer_count: peers.category_n,
       peer_q25: round(peers.q25), peer_q75: round(peers.q75), peer_slugs: peers.slugs }, warnings };
 }
-
-// ---------------------------------------------------------------- farm plans
 const USD = n => n >= 1e9 ? `$${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `$${(n / 1e6).toFixed(2)}M`
   : n >= 1e3 ? `$${(n / 1e3).toFixed(1)}K` : `$${Math.round(n)}`;
-// Documented per-chain fee assumption in USD, not an observation: one entry transaction per chain.
 export const CHAIN_FEES = { Ethereum: [3.5, 22], Arbitrum: [0.15, 1.2], Optimism: [0.15, 1.2],
   Base: [0.05, 0.6], Polygon: [0.02, 0.3], Binance: [0.1, 0.8], Solana: [0.01, 0.15],
   Tron: [0.4, 2.5], Avalanche: [0.1, 1], Bitcoin: [2, 12], default: [0.2, 1.5] };
-const REVIEW_DAYS = 14;
-const MAX_PLAN_CHAINS = 3;
+const REVIEW_DAYS = MODEL_SPEC.review_days;
+const MAX_PLAN_CHAINS = MODEL_SPEC.chain_max;
 const r2 = n => Math.round(n * 100) / 100;
 const feeOf = chain => CHAIN_FEES[chain] || CHAIN_FEES.default;
 const money2 = n => '$' + (n < 10 ? n.toFixed(2).replace(/0$/, '') : Math.round(n).toLocaleString('en-US'));
-
 function capitalFor(p) {
   if (p.tvl_usd >= 5e9) return 250;
   if (p.tvl_usd >= 1e9) return 150;
   if (p.tvl_usd >= 1e8) return 100;
   return 50;
 }
-
 function familyOf(category) {
   const c = (category || '').toLowerCase();
   if (c.includes('lend') || c === 'cdp') return 'lending';
@@ -167,7 +157,6 @@ function familyOf(category) {
   if (c.includes('yield') || c.includes('curator') || c.includes('allocator') || c.includes('basis') || c.includes('stable')) return 'vault';
   return 'generic';
 }
-
 const MECH = {
   lending: 'a supply-only position in one accepted collateral market, borrowing disabled',
   dex: 'one spot swap at a 0.5% slippage ceiling with no volume padding',
@@ -187,7 +176,6 @@ const EXIT = { lending: 'Redeem a small amount first, then withdraw the remainde
   derivative: 'Close exposure, cancel orders and withdraw free collateral', custody: "Use the issuer's redemption route only if already invested",
   vault: 'Redeem a small share first, then exit the remainder net of fees', generic: 'Follow the documented reversal flow' };
 const MISSING = { structural: 'a structural flag that a parent asset explains', category: 'a recorded category', prior: 'at least one independent token peer' };
-
 export function planState(p, structural, score) {
   const d = score.drivers;
   if (structural) return { mode: 'research-only', reason: 'a wrapper, bridge, exchange or versioned product whose value may belong to a parent asset' };
@@ -195,12 +183,9 @@ export function planState(p, structural, score) {
   if (d.peer_basis === 'conservative prior') return { mode: 'research-only', reason: 'no comparable token records, so there is no evidence base for sizing a position' };
   return { mode: 'conditional', reason: `${p.category} with ${d.peer_count} independent peer observations` };
 }
-
-/** category + first chain + structural flag + chain count: the branch a plan is keyed on. */
 export function planBranch(p, structural) {
   return `${familyOf(p.category)}:${[...p.chains].sort(cmp)[0] || 'chain-unknown'}:${structural ? 'structural' : 'direct'}:${p.chains.length > 1 ? 'multi' : 'single'}`;
 }
-
 export function farmPlan(p, structural, score, snapshot) {
   const state = planState(p, structural, score);
   const chains = [...p.chains].sort(cmp).slice(0, MAX_PLAN_CHAINS);
@@ -250,7 +235,6 @@ export function farmPlan(p, structural, score, snapshot) {
     steps, totals: planTotals(steps, capital),
     label: 'Illustrative planning estimates only; not campaign terms. Principal can be lost and rewards may be zero.' };
 }
-
 export function buildRadar(snapshot) {
   const watch = new Set(snapshot.watchlist);
   const rows = snapshot.protocols.map(p => {
@@ -261,19 +245,15 @@ export function buildRadar(snapshot) {
       farm_steps: plan.steps.map((step, i) => stepLabel(step, i, plan)) };
   }).sort((a, b) => b.implied_value_usd - a.implied_value_usd || cmp(a.slug, b.slug))
     .map((row, i) => ({ rank: i + 1, ...row }));
-
-  // rank_delta = TVL rank - model rank, so a positive value means the model lifts the protocol.
   const tvlOrder = [...rows].sort((a, b) => b.tvl_usd - a.tvl_usd || cmp(a.slug, b.slug));
   const tvlRank = new Map(tvlOrder.map((row, i) => [row.slug, i + 1]));
   for (const row of rows) {
     row.tvl_rank = tvlRank.get(row.slug);
     row.rank_delta = row.tvl_rank - row.rank;
   }
-
   const watchlistTotal = new Set(snapshot.watchlist).size;
   const matched = rows.filter(r => r.watchlist).map(r => r.slug);
   const watchlistCovered = matched.length;
-  // Build-time constant from the raw input; the shipped digest is recomputed over it plus the rows.
   const expected = coverageProof(snapshot.watchlist, snapshot.watchlist);
   const digest = coverageProof(snapshot.watchlist, matched);
   if (digest !== expected) throw new Error('coverage digest mismatch at build: a watchlist slug has no row');

@@ -2,15 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark"><meta name="description" content="Meridian: a transparent, frozen-snapshot token research workspace.">
+  <meta name="color-scheme" content="dark">
   <title>Meridian — Token research, with context</title>
   <link rel="icon" href="data:,"><link rel="stylesheet" href="zz-app.css">
   <script type="module" src="app.js"></script>
 </head>
 <body>
-<a class="skip" href="#workspace">Skip to protocol board</a>
 <header class="topbar">
-  <div class="brand"><span class="brand-mark" aria-hidden="true">M</span><span>MERIDIAN<span class="brand-sub">TOKEN RESEARCH / 01</span></span></div>
+  <div class="brand"><span class="brand-mark" aria-hidden="true">M</span><span>MERIDIAN</span></div>
   <nav aria-label="Workspace"><button class="nav-active" id="board-nav">Radar</button><button id="method-button">Methodology <span aria-hidden="true">↗</span></button></nav>
   <div class="freeze"><span class="frozen-icon" aria-hidden="true">◷</span><div>FROZEN SNAPSHOT<strong id="snapshot-date">Loading snapshot</strong></div></div>
 </header>
@@ -21,7 +20,7 @@
   <section id="summary" class="metrics" aria-label="Snapshot coverage"></section>
   <p class="coverage-line" id="coverage-line" aria-live="polite"></p>
   <section class="workspace" id="workspace" aria-label="Protocol research workspace">
-    <div class="workspace-head"><div><p class="eyebrow">THE OPPORTUNITY MAP</p><h2>Protocol radar <span id="view-total"></span></h2></div><span class="model-tag">MODEL 1.0 <span>·</span> SCENARIO MARKET CAP</span></div>
+    <div class="workspace-head"><div><p class="eyebrow">THE OPPORTUNITY MAP</p><h2>Protocol radar <span id="view-total"></span></h2></div><span class="model-tag">MODEL <span id="model-version">1.2</span> <span>·</span> SCENARIO MARKET CAP</span></div>
     <div class="view-tabs" role="group" aria-label="Research universe">
       <button data-view="candidates" aria-pressed="true">Research candidates <span id="count-candidates"></span></button>
       <button data-view="unrecorded" aria-pressed="false">All no-token records <span id="count-unrecorded"></span></button>
@@ -32,7 +31,7 @@
     </div>
     <div class="view-note" id="view-note"></div>
     <div class="filters">
-      <label class="search-wrap"><span class="label">SEARCH PROTOCOLS</span><input id="search" type="search" placeholder="Name, slug, symbol…" autocomplete="off"><kbd>/</kbd></label>
+      <label class="search-wrap"><span class="label">SEARCH PROTOCOLS</span><input id="search" type="search" placeholder="Name, slug, symbol…" autocomplete="off"></label>
       <label><span class="label">CATEGORY</span><select id="category"><option value="">All categories</option></select></label>
       <label><span class="label">CHAIN</span><select id="chain"><option value="">All chains</option></select></label>
       <label><span class="label">COVERAGE</span><select id="coverage"><option value="">All records</option><option value="watchlist">Official watchlist</option><option value="outside">Beyond watchlist</option><option value="structural">Structural caution</option><option value="low">Low confidence only</option></select></label>
@@ -53,31 +52,24 @@
             <th scope="col" class="confidence-col">Evidence</th>
           </tr></thead><tbody id="rows"></tbody></table>
         </div>
-        <div id="empty" hidden><h3>No matching protocols</h3><p>Try another category, chain or search term.</p><button id="empty-reset">Clear filters</button></div>
         <div class="pagination"><span id="page-label"></span><div class="pager">
           <button id="first" aria-label="First page">⇤</button><button id="prev" aria-label="Previous page">←</button>
           <label class="page-jump"><span class="sr-only">Page number</span><input id="page-input" type="number" min="1" step="1" inputmode="numeric"></label>
           <button id="next" aria-label="Next page">→</button><button id="last" aria-label="Last page">⇥</button>
         </div></div>
       </div>
-      <aside id="inspector" aria-label="Selected protocol preview"></aside>
     </div>
     <div class="workspace-foot"><span>TVL ≠ market cap ≠ FDV.</span><span>Values are scenarios, not price targets or expected rewards.</span><button id="method-footer">Read the model →</button></div>
   </section>
-  <footer class="footer"><span>MERIDIAN <span class="muted">/ Independent research instrument</span></span><span id="source-date"></span></footer>
+  <footer class="footer"><span>MERIDIAN</span><span id="source-date"></span></footer>
 </main>
 <dialog id="detail" aria-labelledby="detail-title"><div id="detail-body"></div></dialog>
 <dialog id="method" aria-labelledby="method-title">
   <div class="dialog-header"><div><p class="eyebrow">TRANSPARENT BY DESIGN</p><h2 id="method-title">What the model knows.</h2></div><button class="close" data-close="method" aria-label="Close methodology">×</button></div>
   <div class="method-body">
     <p class="large-copy">A valuation scenario, not a prediction of launch, price or allocation.</p>
-    <div class="formula">TVL <b>×</b> peer multiple <b>×</b> growth <b>×</b> listing maturity <b>×</b> structural factor</div>
-    <div class="method-grid">
-      <section><span class="step-label">01 / ANCHOR</span><h3>Observed market cap / TVL</h3><p>Token-recorded rows with positive market cap and TVL form the comparison set; wrappers, bridges, CEXs and versioned products are excluded and shared token IDs count once. A category median needs 4 independent peers, else a global median, else a 0.25× prior. Ratios clip to 0.05–5×; each detail lists the peer slugs and counts.</p></section>
-      <section><span class="step-label">02 / ADJUST</span><h3>Growth and listing history</h3><p>Growth factor = 1 + clamp(7-day growth, −50, 100) / 400, missing growth neutral. Maturity = 0.65 + 0.35 × √(min(listing age, 1095) / 1095), 0.70 when the date is missing. Listing age is not operating age; TVL caps at $1T and structural heuristics take 0.50×.</p></section>
-      <section><span class="step-label">03 / QUALIFY</span><h3>Uncertainty stays visible</h3><p>Moderate needs category peers, 8+ samples, known growth and date, positive TVL and no structural flag; everything else is Low and nothing is labelled high. Ranges are sensitivity scenarios from peer quartiles, not statistical intervals.</p></section>
-      <section><span class="step-label">04 / LIMIT</span><h3>What the snapshot cannot say</h3><p>TVL is not revenue or equity; market cap is not FDV, which needs absent supply data. There is no price, unlock schedule, parent mapping, trusted app URL or campaign proof, and market-cap −1 is an unavailable sentinel. Δ TVL compares model rank with pure TVL rank.</p></section>
-    </div>
+    <div class="formula" id="formula"></div>
+    <div class="method-grid" id="method-grid"></div>
     <div class="method-alert">Farm plans are conditional research checklists, and rows without evidence are marked research-only with zero spend. Budgets and durations are planning estimates, never eligibility terms. Do not invent activity for an unconfirmed airdrop.</div>
     <p class="note">main.ts writes board.json and the byte-identical dashboard/records.dat; the browser fetches only that same-origin file. model.mjs is the build model and view.mjs the filter, comparator and coverage-proof code, both shown in this dossier.</p>
     <p id="full-source" class="source-text"></p>

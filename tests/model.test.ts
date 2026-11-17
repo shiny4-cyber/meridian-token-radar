@@ -48,7 +48,8 @@ test('zero, missing, sentinel and extreme inputs never fabricate positive market
   assert.equal(r.implied_value_usd, 1);
   assert.equal(r.confidence, 'Low');
   assert.equal(r.drivers.peer_count, 0);
-  assert.equal(r.drivers.age_factor, 0.7);
+  assert.equal(r.drivers.age_factor, 1);
+  assert.equal(r.drivers.age_dropped, true);
   assert.equal(r.drivers.growth_factor, 1);
   assert.ok(tokenRecorded(p));
   p.tvl_usd = 9e15; p.change_7d = 1e20;
